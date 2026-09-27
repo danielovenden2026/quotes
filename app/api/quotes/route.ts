@@ -1,0 +1,4 @@
+import {db,owner,safeRequest,fail} from '@/lib/store';
+import {newQuote} from '@/lib/quote';
+export async function GET(r:Request){try{const rows=await db().prepare('SELECT data, version FROM quotes WHERE owner = ? ORDER BY updated DESC').bind(owner(r)).all();return Response.json(rows.results.map((row:any)=>({...JSON.parse(row.data),version:row.version})),{headers:{'Cache-Control':'no-store'}});}catch(e){return fail(e);}}
+export async function POST(r:Request){try{safeRequest(r);const user=owner(r);const body=await r.json() as any;const q=newQuote(!!body.demo);q.number='VQ-'+q.id.slice(0,8).toUpperCase();q.events=[{at:new Date().toISOString(),text:body.demo?'Sample quote created':'Draft created'}];await db().prepare('INSERT INTO quotes (id, owner, version, data, updated) VALUES (?, ?, ?, ?, ?)').bind(q.id,user,1,JSON.stringify(q),new Date().toISOString()).run();return Response.json(q);}catch(e){return fail(e);}}

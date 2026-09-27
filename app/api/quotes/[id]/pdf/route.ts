@@ -1,0 +1,3 @@
+import {db,owner,fail} from '@/lib/store';
+import {quotePdf} from '@/lib/pdf';
+export async function GET(r:Request,{params}:any){try{const id=(await params).id;const row=await db().prepare('SELECT data FROM quotes WHERE id=? AND owner=?').bind(id,owner(r)).first<any>();if(!row)throw new Error('Quote not found.');const q=JSON.parse(row.data);const bytes=quotePdf(q,new URL('/quote/'+id,r.url).href);return new Response(bytes as BodyInit,{headers:{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="'+q.number+'-Rev'+q.revision+'.pdf"','Cache-Control':'no-store'}});}catch(e){return fail(e);}}
