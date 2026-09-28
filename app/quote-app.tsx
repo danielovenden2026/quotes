@@ -219,7 +219,11 @@ return <><Toaster richColors position="bottom-right"/><div className="test-banne
 
   <a
     className="btn outline header-logout"
+<<<<<<< HEAD
     href="/logout"
+=======
+    href="/cdn-cgi/access/logout"
+>>>>>>> a5ef9eb0793d30a72833108875488ef628f721c8
   >
     Log out
   </a>
