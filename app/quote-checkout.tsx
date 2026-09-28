@@ -26,18 +26,19 @@ function AddressFields({value,onChange,prefix}:{value:CheckoutAddress;onChange:(
  </div>;
 }
 const methods=[['invoice','Email me an invoice'],['eft','Bank transfer (EFT)'],['paypal','PayPal'],['account','Pay with company account'],['card','Credit / debit card']] as const;
-export default function QuoteCheckout({quote,busy,demo,onBack,onSave}:{quote:Quote;busy:boolean;demo:boolean;onBack:()=>void;onSave:(details:CheckoutDetails,refresh:boolean)=>Promise<Quote|null>}){
+export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken}:{quote:Quote;busy:boolean;demo:boolean;onBack:()=>void;onSave:(details:CheckoutDetails,refresh:boolean)=>Promise<Quote|null>;publicToken?:string}){
  const [details,setDetails]=useState(()=>initialCheckout(quote)),[error,setError]=useState(''),[savedMessage,setSavedMessage]=useState('');const id=useId();
  const [paying,setPaying]=useState(false),[gateway,setGateway]=useState<{configured:boolean;mode:'sandbox'|'live';paymentsEnabled:boolean;testPaymentsEnabled:boolean}|null>(null),[gatewayError,setGatewayError]=useState('');
  const paymentLock=useRef(false);
- useEffect(()=>{if(demo)return;const controller=new AbortController();fetch('/api/quotes/'+quote.id+'/eway',{cache:'no-store',signal:controller.signal}).then(async r=>{const data=await r.json() as any;if(!r.ok)throw Error(data.error);setGateway(data);}).catch(e=>{if(!controller.signal.aborted)setGatewayError(e.message||'eWAY status could not be loaded.');});return()=>controller.abort();},[demo,quote.id]);
+ const gatewayUrl=publicToken?'/api/public/quote/'+encodeURIComponent(publicToken)+'/eway':'/api/quotes/'+quote.id+'/eway';
+ useEffect(()=>{if(demo)return;const controller=new AbortController();fetch(gatewayUrl,{cache:'no-store',signal:controller.signal}).then(async r=>{const data=await r.json() as any;if(!r.ok)throw Error(data.error);setGateway(data);}).catch(e=>{if(!controller.signal.aborted)setGatewayError(e.message||'eWAY status could not be loaded.');});return()=>controller.abort();},[demo,quote.id,gatewayUrl]);
  async function pay(){
   if(paymentLock.current||busy)return;paymentLock.current=true;setPaying(true);setError('');
   try{
    const result=checkoutSchema.safeParse(details);if(!result.success)throw Error(result.error.issues[0]?.message||'Complete the required fields.');
    const next=JSON.stringify(result.data)===JSON.stringify(quote.checkout)?quote:await onSave(result.data,false);
    if(!next)return;
-   const r=await fetch('/api/quotes/'+next.id+'/eway',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:next.version})});const data=await r.json() as any;if(!r.ok)throw Error(data.error||'Unable to start payment.');
+   const r=await fetch(gatewayUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:next.version})});const data=await r.json() as any;if(!r.ok)throw Error(data.error||'Unable to start payment.');
    window.location.assign(data.resultUrl||data.paymentUrl);
   }catch(e){setError(e instanceof Error?e.message:'Unable to start payment.');}finally{paymentLock.current=false;setPaying(false);}
  }
@@ -74,7 +75,7 @@ export default function QuoteCheckout({quote,busy,demo,onBack,onSave}:{quote:Quo
  {details.paymentMethod==='card'&&<div className="checkout-card-test">
  <strong>{gateway?.mode==='live'?'Secure card payment · Live':'Secure card payment · Sandbox'}</strong>
  <p>{gateway?.mode==='live'?'You will be redirected to eWAY to complete a real card payment securely.':'No money is taken. Your quote remains available for testing.'}</p>
- {demo?<p className="checkout-error">Open a saved quote while signed in to use eWAY. Public demo quotes cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:gateway.mode==='live'?<button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.paymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure payment'}</button>:<><p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p><button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.testPaymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure test payment'}</button></>}
+ {demo?<p className="checkout-error">Open an approved customer quotation to use eWAY. Demo quotations cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:gateway.mode==='live'?<button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.paymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure payment'}</button>:<><p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p><button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.testPaymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure test payment'}</button></>}
  </div>}
  </section>
  </fieldset>

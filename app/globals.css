@@ -571,3 +571,9 @@ footer{color:var(--verdex-muted);border-color:var(--verdex-border)}
 .customer-account-list small,.customer-account-order small{display:block;margin-top:3px;color:#637789;font-size:12px}
 .customer-account-order{grid-template-columns:minmax(0,1fr) auto}
 @media(max-width:700px){.customer-account-preview .section-heading.between{flex-direction:column}.customer-account-list>button,.customer-account-order{grid-template-columns:1fr}.customer-account-list>button>svg{display:none}}
+
+
+.customer-share-link{margin-top:12px;padding:12px;border:1px solid #dce4ea;border-radius:7px;background:#f8fbfd}
+.customer-share-link>strong{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.customer-share-link>input{width:100%;padding:9px 10px;border:1px solid #c8d5df;border-radius:6px;background:#fff;font-size:12px}
+.customer-share-link .actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}

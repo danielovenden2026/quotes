@@ -42,13 +42,13 @@ export function safePaymentUrl(value:unknown,mode:Mode){
 }
 export async function readEwayPayment(id:string){return db().prepare('SELECT * FROM eway_test_payments WHERE id=?').bind(id).first<EwayPayment>();}
 export function paymentSummary(p:EwayPayment){return {id:p.id,quoteId:p.quote_id,quoteVersion:p.quote_version,amount:p.amount,status:p.status,transactionId:p.transaction_id,responseCode:p.response_code,mode:paymentMode(p),created:p.created};}
-export async function startEwayPayment(q:Quote,version:number,origin:string){
+export async function startEwayPayment(q:Quote,version:number,origin:string,resultPath='/payment-result'){
  if(version!==q.version)throw new EwayError('This quote changed. Reload it before paying.',409);
  const {details,amount}=checkPayable(q),credentials=await paymentCredentials(),mode=credentials.mode;
  let existing=await db().prepare('SELECT * FROM eway_test_payments WHERE quote_id=? AND quote_version=?').bind(q.id,q.version).first<EwayPayment>();
  if(existing){
   if(paymentMode(existing)!==mode||existing.connection!==credentials.verifiedAt)throw new EwayError('The eWAY connection changed. Save checkout details again before starting another payment.');
-  if(existing.status==='succeeded')return {...paymentSummary(existing),resultUrl:'/payment-result?id='+existing.id};
+  if(existing.status==='succeeded')return {...paymentSummary(existing),resultUrl:resultPath+'?id='+existing.id};
   if(existing.status==='pending'&&existing.payment_url&&Date.now()-Date.parse(existing.created)<3600000)return {...paymentSummary(existing),paymentUrl:safePaymentUrl(existing.payment_url,mode)};
   throw new EwayError(existing.status==='creating'?'A payment session is being prepared. Wait a moment and retry.':'Save checkout details again to start a new payment.',409);
  }
@@ -58,7 +58,7 @@ export async function startEwayPayment(q:Quote,version:number,origin:string){
  try{
   const a=details.billing;
   const description=(mode==='live'?'Verdex quote ':'Sandbox quote ')+q.number;
-  const data=await call('/AccessCodesShared',credentials,{Customer:{FirstName:a.firstName.slice(0,50),LastName:a.lastName.slice(0,50),CompanyName:a.company.slice(0,50),Street1:a.street1.slice(0,50),Street2:a.street2.slice(0,50),City:a.city.slice(0,50),State:a.state,PostalCode:a.postcode,Country:'au',Email:details.email.slice(0,50),Phone:a.phone.slice(0,32)},Payment:{TotalAmount:amount,InvoiceNumber:invoice,InvoiceReference:id,CurrencyCode:'AUD',InvoiceDescription:description.slice(0,64)},RedirectUrl:origin+'/payment-result?id='+id,CancelUrl:origin+'/payment-result?id='+id+'&cancelled=1',Method:'ProcessPayment',TransactionType:'Purchase',CustomerReadOnly:true,HeaderText:mode==='live'?'Verdex secure payment':'Verdex — test payment',Language:'EN'});
+  const data=await call('/AccessCodesShared',credentials,{Customer:{FirstName:a.firstName.slice(0,50),LastName:a.lastName.slice(0,50),CompanyName:a.company.slice(0,50),Street1:a.street1.slice(0,50),Street2:a.street2.slice(0,50),City:a.city.slice(0,50),State:a.state,PostalCode:a.postcode,Country:'au',Email:details.email.slice(0,50),Phone:a.phone.slice(0,32)},Payment:{TotalAmount:amount,InvoiceNumber:invoice,InvoiceReference:id,CurrencyCode:'AUD',InvoiceDescription:description.slice(0,64)},RedirectUrl:origin+resultPath+'?id='+id,CancelUrl:origin+resultPath+'?id='+id+'&cancelled=1',Method:'ProcessPayment',TransactionType:'Purchase',CustomerReadOnly:true,HeaderText:mode==='live'?'Verdex secure payment':'Verdex — test payment',Language:'EN'});
   if(data.Errors)throw new EwayError('eWAY could not create the '+(mode==='live'?'live':'test')+' payment. Check the billing details and saved eWAY connection.');
   if(typeof data.AccessCode!=='string'||!data.AccessCode||data.AccessCode.length>512)throw new EwayError('eWAY did not return a valid payment session.',503);
   const url=safePaymentUrl(data.SharedPaymentUrl,mode);
