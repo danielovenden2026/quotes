@@ -49,5 +49,10 @@ export const orders=sqliteTable('orders',{
  status:text('status').notNull().default('New Order'),data:text('data').notNull(),created:text('created').notNull(),updated:text('updated').notNull(),enteredExoAt:text('entered_exo_at'),
 },table=>[uniqueIndex('orders_quote_revision_unique').on(table.quoteId,table.quoteRevision),index('idx_orders_owner_created').on(table.owner,table.created),index('idx_orders_customer_email_created').on(table.customerEmail,table.created)]);
 
+export const quoteShareTokens=sqliteTable('quote_share_tokens',{
+ token:text('token').primaryKey(),quoteId:text('quote_id').notNull().unique(),active:integer('active').notNull().default(1),
+ created:text('created').notNull(),createdBy:text('created_by').notNull(),revokedAt:text('revoked_at'),
+},table=>[index('idx_quote_share_tokens_active').on(table.active)]);
+
 export const workspaceSessions=sqliteTable('workspace_sessions',{hash:text('hash').primaryKey(),userId:text('user_id').notNull(),userVersion:integer('user_version').notNull(),expires:integer('expires').notNull(),created:integer('created').notNull()},table=>[index('idx_workspace_sessions_user').on(table.userId),index('idx_workspace_sessions_expiry').on(table.expires)]);
 export const authLoginAttempts=sqliteTable('auth_login_attempts',{email:text('email').primaryKey(),attempts:integer('attempts').notNull().default(0),windowStart:integer('window_start').notNull(),lockedUntil:integer('locked_until').notNull().default(0)});
