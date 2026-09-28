@@ -25,11 +25,11 @@ type Props={
 };
 const fieldStyles='box-sizing:border-box;width:100%;height:44px;border:0;background:#fff;color:#173b56;padding:11px 12px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;outline:none;';
 export default function EwaySecureFields({publicApiKey,disabled=false,onRegisterSave}:Props){
- const token=useRef(''),valid=useRef<Record<string,boolean>>({name:false,card:false,expirytext:false,cvn:false});
+ const token=useRef(''),valid=useRef<Record<string,boolean>>({name:false,card:false,expirytext:false,cvn:false}),readyRef=useRef(false);
  const [ready,setReady]=useState(false),[error,setError]=useState('');
  useEffect(()=>{
   let cancelled=false;
-  token.current='';valid.current={name:false,card:false,expirytext:false,cvn:false};setReady(false);setError('');
+  token.current='';valid.current={name:false,card:false,expirytext:false,cvn:false};readyRef.current=false;setReady(false);setError('');
   const callback=(event:EwaySecureFieldEvent)=>{
    if(cancelled)return;
    const field=event.targetField||'';
@@ -46,7 +46,7 @@ export default function EwaySecureFields({publicApiKey,disabled=false,onRegister
      ['eway-secure-field-cvn','cvn'],
      ['eway-secure-field-name','name'],
     ] as const)window.eWAY.setupSecureField({publicApiKey,fieldDivId,fieldType,styles:fieldStyles,autocomplete:'true'},callback);
-    setReady(true);
+    readyRef.current=true;setReady(true);
    }catch{setError('eWAY Secure Fields could not be loaded. Refresh the page and try again.');}
   };
   const existing=document.querySelector<HTMLScriptElement>('script[data-verdex-eway-secure-fields]');
@@ -61,7 +61,7 @@ export default function EwaySecureFields({publicApiKey,disabled=false,onRegister
    document.head.appendChild(script);
   }
   const save=()=>new Promise<string>((resolve,reject)=>{
-   if(!window.eWAY||!ready){reject(new Error('Secure card fields are still loading.'));return;}
+   if(!window.eWAY||!readyRef.current){reject(new Error('Secure card fields are still loading.'));return;}
    setError('');
    try{
     window.eWAY.saveAllFields(()=>{
@@ -76,7 +76,7 @@ export default function EwaySecureFields({publicApiKey,disabled=false,onRegister
   });
   onRegisterSave(save);
   return()=>{cancelled=true;onRegisterSave(null);};
- },[publicApiKey,ready,onRegisterSave]);
+ },[publicApiKey,onRegisterSave]);
  return <div className={'eway-secure-fields '+(disabled?'disabled':'')}>
   <div className="eway-card-heading"><span><CreditCard size={19}/>Credit/Debit Card</span><span className="eway-card-brands"><b>AMEX</b><b>MC</b><b>VISA</b></span></div>
   <div className="eway-card-fields" aria-busy={!ready}>
