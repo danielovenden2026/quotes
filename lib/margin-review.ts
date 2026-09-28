@@ -1,4 +1,4 @@
-import {authenticatedUserId} from './request-auth';
+import {actor} from './workspace-access';
 import 'server-only';
 import {getGpSettings} from './gp-settings';
 import {getCosts} from './cost-data';
@@ -7,7 +7,8 @@ import {normaliseSku,type CostRecords} from './cost-source';
 import {calculateMargins,type MarginItem} from './gross-profit';
 import {getAdhoc} from './adhoc-products';
 export async function reviewMargins(items:MarginItem[],request:Request,quoteOwner?:string){
- const rows=await Promise.all(items.map(i=>i.adhocId?getAdhoc(i.adhocId,quoteOwner||authenticatedUserId(request)||''):null));
+ const ownerId=quoteOwner||(await actor(request)).id;
+ const rows=await Promise.all(items.map(i=>i.adhocId?getAdhoc(i.adhocId,ownerId):null));
  const hasFeed=items.some((i,index)=>!i.adhocId||!!rows[index]?.source_sku);
  const [source,catalogue]=hasFeed?await Promise.all([getCosts(),getCatalogue()]):[new Map() as CostRecords,{products:[]}];
  const eligible=new Set(catalogue.products.map(p=>normaliseSku(p.sku)));

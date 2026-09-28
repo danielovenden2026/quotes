@@ -6,8 +6,8 @@ This package starts from the fresh v129 Work export and keeps the production cha
 
 - Production D1 database ID in `vite.config.ts`:
   `a55a5bcb-f093-498f-a315-5a45c9789a0a`
-- Cloudflare Access identity support using `Cf-Access-Authenticated-User-Email`.
-- Legacy ChatGPT/Sites auth headers remain as fallbacks for tests/local compatibility.
+- Standard Verdex email/password authentication backed by D1 sessions.
+- Cloudflare Access can remain temporarily during rollout, then should be removed after application login is tested.
 - R2 is now optional at deploy time. Set `VERDEX_R2_BUCKET_NAME` in the Cloudflare build environment after creating the production R2 bucket; it will bind as `BUCKET`.
 - Original v129 UI, API, integrations, migrations and assets are otherwise retained.
 
@@ -26,9 +26,9 @@ in Cloudflare D1 Console for the existing Verdex Quotes database. Do this once o
 The v129 workspace permissions system needs one trusted bootstrap Super Administrator.
 In Cloudflare Worker runtime environment variables, set:
 
-`COST_ADMIN_USER_IDS=<the exact email address you use to sign in through Cloudflare Access>`
+`COST_ADMIN_USER_IDS=<the exact email address of the protected bootstrap Super Administrator>`
 
-For this independent deployment the Cloudflare Access email is also used as the stable user ID.
+This value protects the original Super Administrator record and enables the one-time password bootstrap described below.
 
 Do not set this to a whole domain. Use only the trusted administrator email(s), comma-separated if needed.
 
@@ -71,3 +71,9 @@ Do not create a new D1 database. The configured ID above points to the existing 
 ## Validation performed on this merged package
 
 The modified TypeScript files passed a TypeScript transpile/syntax check. A full dependency install/build could not be run in the packaging environment because outbound package-registry access was unavailable. Cloudflare's connected Git build is therefore the final full build verification step.
+
+## Standard Verdex login
+See `STANDARD-LOGIN-AND-HUBSPOT-SETUP.md`. Apply `cloudflare-production-migration-0008-standard-login.sql`, set passwords in Users while Cloudflare Access is still enabled, test `/login`, then disable Cloudflare Access for the quotations hostname.
+
+## HubSpot credential storage
+The in-app HubSpot token connection requires the runtime secret `HUBSPOT_CREDENTIAL_KEY` plus the existing `BUCKET` R2 binding.

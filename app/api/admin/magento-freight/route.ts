@@ -1,5 +1,4 @@
-import {authenticatedUserId} from '@/lib/request-auth';
-import {accessStatus} from '@/lib/workspace-access';
+import {accessStatus,actor} from '@/lib/workspace-access';
 import {env} from 'cloudflare:workers';
 import {adminAccess,privateHeaders} from '@/lib/admin-access';
 import {estimateMagento,FreightError,getMagentoSettings,saveMagentoSettings,storeSchema} from '@/lib/magento-freight';
@@ -15,7 +14,7 @@ export async function POST(request:Request){
  let body:any;try{const reader=request.body?.getReader();if(!reader)throw Error();let bytes=0,text='';const decoder=new TextDecoder();try{for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>20000)throw Error();text+=decoder.decode(part.value,{stream:true});}body=JSON.parse(text+decoder.decode());}finally{await reader.cancel();reader.releaseLock();}}catch{return json({error:'Invalid freight request.'},400);}
  if(body?.action!=='estimate'&&await adminAccess(request,env)!==200)return json({error:'Super Administrator access required.'},403);
  if(!['test','estimate','disconnect'].includes(body?.action))return json({error:'Invalid freight action.'},400);
- const user=authenticatedUserId(request)!;
+ const user=(await actor(request)).id;
  if(running.has(user))return json({error:'A freight calculation is already running. Please wait.'},429);
  running.add(user);
  try{

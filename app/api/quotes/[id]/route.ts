@@ -10,7 +10,7 @@ import {syncAutoOptions} from '@/lib/auto-options';
 import {getCatalogue} from '@/lib/catalogue-data';
 import {refreshCustomerFreight} from '@/lib/customer-freight';
 import {verifyAdhocItems} from '@/lib/adhoc-products';
-import {db,owner,safeRequest,fail} from '@/lib/store';
+import {db,safeRequest,fail} from '@/lib/store';
 import {type Quote} from '@/lib/quote';
 import {withStandardPrices} from '@/lib/standard-prices';
 import {applyQuoteAction} from '@/lib/quote-actions';

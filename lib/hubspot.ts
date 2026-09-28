@@ -6,7 +6,8 @@ const credentialPath='integrations/hubspot/credential-v1';
 const properties=['firstname','lastname','email','company','address','city','state','zip','country'];
 export class HubSpotError extends Error {constructor(message:string,public status=503){super(message);}}
 async function encryptionKey(){
- if(!env.HUBSPOT_CREDENTIAL_KEY||!env.BUCKET)throw new HubSpotError('HubSpot secure storage is not configured yet.');
+ if(!env.BUCKET)throw new HubSpotError('HubSpot storage is not configured. Add the BUCKET R2 binding in Cloudflare.');
+ if(!env.HUBSPOT_CREDENTIAL_KEY)throw new HubSpotError('HubSpot secure storage needs the HUBSPOT_CREDENTIAL_KEY runtime secret in Cloudflare. Add the secret, redeploy, then connect again.');
  const raw=Uint8Array.from(atob(env.HUBSPOT_CREDENTIAL_KEY),c=>c.charCodeAt(0));
  return crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt']);
 }

@@ -18,6 +18,8 @@ export const workspaceUsers = sqliteTable('workspace_users', {
  email:text('email').primaryKey(), userId:text('user_id').unique(), name:text('name').notNull(),
  phone:text('phone').notNull().default(''), mobile:text('mobile').notNull().default(''),
  permissions:text('permissions').notNull(), active:integer('active').notNull().default(1),
+ passwordHash:text('password_hash').notNull().default(''), passwordSalt:text('password_salt').notNull().default(''),
+ passwordIterations:integer('password_iterations').notNull().default(0),
  version:integer('version').notNull().default(1), updated:text('updated').notNull(), updatedBy:text('updated_by').notNull(),
 });
 
@@ -38,3 +40,6 @@ export const ewayTestPayments=sqliteTable('eway_test_payments',{
  status:text('status').notNull(), accessCode:text('access_code'), paymentUrl:text('payment_url'),
  transactionId:text('transaction_id'), responseCode:text('response_code'), created:text('created').notNull(), updated:text('updated').notNull(),
 },table=>[uniqueIndex('idx_eway_test_quote_version').on(table.quoteId,table.quoteVersion)]);
+
+export const workspaceSessions=sqliteTable('workspace_sessions',{hash:text('hash').primaryKey(),userId:text('user_id').notNull(),userVersion:integer('user_version').notNull(),expires:integer('expires').notNull(),created:integer('created').notNull()},table=>[index('idx_workspace_sessions_user').on(table.userId),index('idx_workspace_sessions_expiry').on(table.expires)]);
+export const authLoginAttempts=sqliteTable('auth_login_attempts',{email:text('email').primaryKey(),attempts:integer('attempts').notNull().default(0),windowStart:integer('window_start').notNull(),lockedUntil:integer('locked_until').notNull().default(0)});

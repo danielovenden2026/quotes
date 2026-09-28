@@ -7,6 +7,7 @@ declare namespace Cloudflare {
     TWILIO_VERIFY_SERVICE_SID?: string;
     BUCKET?: R2Bucket;
     COST_ADMIN_USER_IDS?: string;
+    VERDEX_INITIAL_ADMIN_PASSWORD?: string;
     HUBSPOT_ACCESS_TOKEN?: string;
     HUBSPOT_CREDENTIAL_KEY?: string;
     EWAY_CREDENTIAL_KEY?: string;
