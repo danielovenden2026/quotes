@@ -25,15 +25,15 @@ type Props={
 };
 const fieldStyles='box-sizing:border-box;width:100%;height:44px;border:0;background:#fff;color:#173b56;padding:11px 12px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;outline:none;';
 export default function EwaySecureFields({publicApiKey,disabled=false,onRegisterSave}:Props){
- const token=useRef(''),valid=useRef<Record<string,boolean>>({name:false,card:false,expirytext:false,cvn:false}),readyRef=useRef(false);
+ const token=useRef(''),valid=useRef<Record<string,boolean>>({name:false,card:false,expirytext:false,cvn:false}),saved=useRef<Record<string,boolean>>({name:false,card:false,expirytext:false,cvn:false}),readyRef=useRef(false);
  const [ready,setReady]=useState(false),[error,setError]=useState('');
  useEffect(()=>{
   let cancelled=false;
-  token.current='';valid.current={name:false,card:false,expirytext:false,cvn:false};readyRef.current=false;setReady(false);setError('');
+  token.current='';valid.current={name:false,card:false,expirytext:false,cvn:false};saved.current={name:false,card:false,expirytext:false,cvn:false};readyRef.current=false;setReady(false);setError('');
   const callback=(event:EwaySecureFieldEvent)=>{
    if(cancelled)return;
    const field=event.targetField||'';
-   if(field in valid.current)valid.current[field]=event.fieldValid!==false&&event.valueIsValid===true;
+   if(field in valid.current){valid.current[field]=event.fieldValid!==false&&event.valueIsValid!==false;if(event.valueIsSaved===true)saved.current[field]=true;}
    if(typeof event.secureFieldCode==='string'&&event.secureFieldCode.length>10)token.current=event.secureFieldCode;
    if(event.fieldValid===false)setError('One of the secure card fields could not be loaded. Refresh the page and try again.');
   };
@@ -64,14 +64,16 @@ export default function EwaySecureFields({publicApiKey,disabled=false,onRegister
    if(!window.eWAY||!readyRef.current){reject(new Error('Secure card fields are still loading.'));return;}
    setError('');
    try{
-    window.eWAY.saveAllFields(()=>{
-     setTimeout(()=>{
-      const allValid=Object.values(valid.current).every(Boolean);
-      if(!allValid){reject(new Error('Check the card number, expiry, security code and name on card.'));return;}
-      if(!token.current){reject(new Error('eWAY could not secure the card details. Please try again.'));return;}
-      resolve(token.current);
-     },0);
-    },3000);
+    const started=Date.now();
+    const finish=()=>{
+     const allValid=Object.values(valid.current).every(Boolean);
+     const allSaved=Object.values(saved.current).every(Boolean);
+     if(token.current&&allValid&&allSaved){resolve(token.current);return;}
+     if(Date.now()-started<1800){setTimeout(finish,75);return;}
+     if(!allValid){reject(new Error('Check the card number, expiry, security code and name on card.'));return;}
+     reject(new Error('eWAY could not secure the card details. Please try again.'));
+    };
+    window.eWAY.saveAllFields(()=>finish(),3000);
    }catch{reject(new Error('eWAY could not secure the card details. Please try again.'));}
   });
   onRegisterSave(save);
