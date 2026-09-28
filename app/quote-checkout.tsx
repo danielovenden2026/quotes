@@ -10,6 +10,7 @@ import {type Quote,totals,money,lineKey,expired} from '@/lib/quote';
 import {freightNeedsRefresh} from '@/lib/freight';
 import {fulfilmentCharges} from '@/lib/fulfilment';
 import {lineSubtotal,discountLabel,hasDiscount,netUnitPrice} from '@/lib/line-pricing';
+import EwaySecureFields from './eway-secure-fields';
 
 function AddressFields({value,onChange,prefix}:{value:CheckoutAddress;onChange:(value:CheckoutAddress)=>void;prefix:string}){
  const patch=(field:keyof CheckoutAddress,v:string)=>onChange({...value,[field]:v});
@@ -28,19 +29,23 @@ function AddressFields({value,onChange,prefix}:{value:CheckoutAddress;onChange:(
 const methods=[['invoice','Email me an invoice'],['eft','Bank transfer (EFT)'],['paypal','PayPal'],['account','Pay with company account'],['card','Credit / debit card']] as const;
 export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken}:{quote:Quote;busy:boolean;demo:boolean;onBack:()=>void;onSave:(details:CheckoutDetails,refresh:boolean)=>Promise<Quote|null>;publicToken?:string}){
  const [details,setDetails]=useState(()=>initialCheckout(quote)),[error,setError]=useState(''),[savedMessage,setSavedMessage]=useState('');const id=useId();
- const [paying,setPaying]=useState(false),[gateway,setGateway]=useState<{configured:boolean;mode:'sandbox'|'live';paymentsEnabled:boolean;testPaymentsEnabled:boolean}|null>(null),[gatewayError,setGatewayError]=useState('');
- const paymentLock=useRef(false);
+ const [paying,setPaying]=useState(false),[gateway,setGateway]=useState<{configured:boolean;mode:'sandbox'|'live';paymentsEnabled:boolean;testPaymentsEnabled:boolean;secureFieldsReady?:boolean;publicApiKey?:string|null}|null>(null),[gatewayError,setGatewayError]=useState('');
+ const paymentLock=useRef(false),secureFieldsSave=useRef<(()=>Promise<string>)|null>(null);
  const gatewayUrl=publicToken?'/api/public/quote/'+encodeURIComponent(publicToken)+'/eway':'/api/quotes/'+quote.id+'/eway';
  useEffect(()=>{if(demo)return;const controller=new AbortController();fetch(gatewayUrl,{cache:'no-store',signal:controller.signal}).then(async r=>{const data=await r.json() as any;if(!r.ok)throw Error(data.error);setGateway(data);}).catch(e=>{if(!controller.signal.aborted)setGatewayError(e.message||'eWAY status could not be loaded.');});return()=>controller.abort();},[demo,quote.id,gatewayUrl]);
  async function pay(){
   if(paymentLock.current||busy)return;paymentLock.current=true;setPaying(true);setError('');
   try{
    const result=checkoutSchema.safeParse(details);if(!result.success)throw Error(result.error.issues[0]?.message||'Complete the required fields.');
+   if(details.paymentMethod!=='card')throw Error('Select Credit / debit card first.');
+   if(!gateway?.secureFieldsReady||!gateway.publicApiKey)throw Error('eWAY Secure Fields is not configured yet.');
+   if(!secureFieldsSave.current)throw Error('Secure card fields are still loading.');
    const next=JSON.stringify(result.data)===JSON.stringify(quote.checkout)?quote:await onSave(result.data,false);
    if(!next)return;
-   const r=await fetch(gatewayUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:next.version})});const data=await r.json() as any;if(!r.ok)throw Error(data.error||'Unable to start payment.');
-   window.location.assign(data.resultUrl||data.paymentUrl);
-  }catch(e){setError(e instanceof Error?e.message:'Unable to start payment.');}finally{paymentLock.current=false;setPaying(false);}
+   const securedCardData=await secureFieldsSave.current();
+   const r=await fetch(gatewayUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:next.version,securedCardData})});const data=await r.json() as any;if(!r.ok)throw Error(data.error||'Unable to process payment.');
+   window.location.assign(data.resultUrl);
+  }catch(e){setError(e instanceof Error?e.message:'Unable to process payment.');}finally{paymentLock.current=false;setPaying(false);}
  }
  const locked=busy||paying;
  const patch=(p:Partial<CheckoutDetails>)=>{setDetails(v=>({...v,...p}));setSavedMessage('');setError('');};
@@ -71,11 +76,11 @@ export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken
  {details.fulfilmentMethod==='delivery'&&<button type="button" className={'btn '+(stale?'danger':'outline')} onClick={()=>void save(true)}><RefreshCw size={17}/>{busy?'Calculating…':'Refresh freight cost'}</button>}
  </section>
  <section className="checkout-section"><h2><span>4</span>Payment method</h2><RadioGroup aria-label="Payment method" className="checkout-payment-options" value={details.paymentMethod} onValueChange={v=>patch({paymentMethod:v as CheckoutDetails['paymentMethod']})}>{methods.map(([value,label])=><label htmlFor={id+value} className={'checkout-payment-choice '+(details.paymentMethod===value?'selected':'')} key={value}><RadioGroupItem value={value} id={id+value}/><span>{label}</span>{value==='card'&&<CreditCard size={22}/>}</label>)}</RadioGroup>
- <div className="checkout-payment-info"><LockKeyhole size={21}/><p>{details.paymentMethod==='card'?(gateway?.mode==='live'?'Select Continue to secure payment to enter your cardholder name, card number, expiry and CVV on eWAY’s secure hosted page. This will process a real payment.':'Select Continue to secure test payment to enter your cardholder name, card number, expiry and CVV on eWAY’s secure page. Use test card details only.'):details.paymentMethod==='account'?'Company account orders are subject to account approval and agreed payment terms.':details.paymentMethod==='paypal'?'PayPal is shown to match your website checkout. PayPal payments are not connected.':details.paymentMethod==='invoice'?'Your invoice preference will be saved. Invoice emails are not sent in this preview.':'Your bank transfer preference will be saved. No payment or order is created in this preview.'}</p></div>
+ <div className="checkout-payment-info"><LockKeyhole size={21}/><p>{details.paymentMethod==='card'?'Enter your card details below. The card fields are securely hosted by eWAY inside this checkout page; Verdex does not receive or store the raw card number or CVV.':details.paymentMethod==='account'?'Company account orders are subject to account approval and agreed payment terms.':details.paymentMethod==='paypal'?'PayPal is shown to match your website checkout. PayPal payments are not connected.':details.paymentMethod==='invoice'?'Your invoice preference will be saved. Invoice emails are not sent in this preview.':'Your bank transfer preference will be saved. No payment or order is created in this preview.'}</p></div>
  {details.paymentMethod==='card'&&<div className="checkout-card-test">
  <strong>{gateway?.mode==='live'?'Secure card payment · Live':'Secure card payment · Sandbox'}</strong>
- <p>{gateway?.mode==='live'?'You will be redirected to eWAY to complete a real card payment securely.':'No money is taken. Your quote remains available for testing.'}</p>
- {demo?<p className="checkout-error">Open an approved customer quotation to use eWAY. Demo quotations cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:gateway.mode==='live'?<button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.paymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure payment'}</button>:<><p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p><button type="button" className="btn primary" disabled={locked||stale||!available||!gateway.testPaymentsEnabled} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Opening eWAY…':'Continue to secure test payment'}</button></>}
+ <p>{gateway?.mode==='live'?'Your card will be processed securely by eWAY without leaving this checkout page.':'Sandbox mode only. No real money is taken.'}</p>
+ {demo?<p className="checkout-error">Open an approved customer quotation to use eWAY. Demo quotations cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:!gateway.secureFieldsReady||!gateway.publicApiKey?<p className="checkout-error">Reconnect eWAY in Workspace Connections and add the Public API Key to enable embedded card fields.</p>:<><EwaySecureFields publicApiKey={gateway.publicApiKey} disabled={locked||stale||!available} onRegisterSave={save=>{secureFieldsSave.current=save;}}/>{gateway.mode==='sandbox'&&<p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p>}<button type="button" className="btn primary" disabled={locked||stale||!available||!(gateway.paymentsEnabled||gateway.testPaymentsEnabled)} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Processing payment…':gateway.mode==='live'?'Pay securely now':'Process secure test payment'}</button></>}
  </div>}
  </section>
  </fieldset>
@@ -87,7 +92,7 @@ export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken
  <dl className="checkout-totals"><div><dt>Subtotal</dt><dd>{money(t.items)}</dd></div><div><dt>{charges.method==='Delivery'?'Delivery freight':charges.method}</dt><dd>{stale?'Recalculate':money(charges.method==='Delivery'?preview.freight:charges.total)}</dd></div>{details.fulfilmentMethod==='delivery'&&<div><dt>Site handling</dt><dd>{money(preview.handling)}</dd></div>}<div><dt>GST (10%)</dt><dd>{stale?'Pending':money(t.gst)}</dd></div><div className="checkout-grand"><dt>Grand total<small>including GST</small></dt><dd>{stale?'Pending':money(t.total)}</dd></div></dl><p className="checkout-currency">All amounts in AUD</p>
  {error&&<p className="checkout-error" role="alert">{error}</p>}{savedMessage&&<p className="checkout-saved" role="status"><CheckCircle2 size={18}/>{savedMessage}</p>}
  {!available&&<p className="checkout-error" role="alert">This quote is {quote.status.toLowerCase()}{expired(quote)?' or expired':''}. Return to the quote for sales approval.</p>}
- <button type="submit" className="btn primary full" disabled={locked||!available}>{busy?'Saving…':'Save checkout details'}</button><button type="button" className="btn primary full" disabled={locked||!available||stale||demo||!(gateway?.paymentsEnabled||gateway?.testPaymentsEnabled)||details.paymentMethod!=='card'} onClick={()=>void pay()}>{paying?'Opening eWAY…':gateway?.mode==='live'?'Continue to secure payment':'Continue to secure test payment'} <LockKeyhole size={16}/></button><p className="checkout-help">{gateway?.mode==='live'?'Live card payments are processed securely by eWAY. Magento or EXO order creation is not automatic yet.':'Sandbox card payments only. No money is taken and no Magento or EXO order is created. Other payment methods are saved as preferences.'}</p>
+ <button type="submit" className="btn primary full" disabled={locked||!available}>{busy?'Saving…':'Save checkout details'}</button><button type="button" className="btn primary full" disabled={locked||!available||stale||demo||!(gateway?.paymentsEnabled||gateway?.testPaymentsEnabled)||details.paymentMethod!=='card'||!gateway?.secureFieldsReady} onClick={()=>void pay()}>{paying?'Processing payment…':gateway?.mode==='live'?'Pay securely now':'Process secure test payment'} <LockKeyhole size={16}/></button><p className="checkout-help">{gateway?.mode==='live'?'Live card payments are processed securely by eWAY Secure Fields without leaving this checkout page. Successful payment creates a Verdex order for EXO processing.':'Sandbox card payments only. No money is taken. Other payment methods are saved as preferences.'}</p>
  </section><p className="checkout-terms">Quotation subject to Verdex’s terms and conditions.</p></aside>
  </form></main></div>;
 }
