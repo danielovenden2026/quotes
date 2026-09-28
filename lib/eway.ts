@@ -3,12 +3,13 @@ import {env} from 'cloudflare:workers';
 import {z} from 'zod';
 const storagePath='integrations/eway/credential-v1';
 const encoded=new TextEncoder();
-const credentialsSchema=z.object({mode:z.enum(['sandbox','live']),apiKey:z.string().trim().min(10).max(500).regex(/^[\x21-\x7e]+$/).refine(v=>!v.includes(':')),apiPassword:z.string().min(1).max(500).regex(/^[\x20-\x7e]+$/)});
+const publicApiKey=z.string().trim().min(10).max(200).regex(/^[A-Za-z0-9-]+$/);
+const credentialsSchema=z.object({mode:z.enum(['sandbox','live']),apiKey:z.string().trim().min(10).max(500).regex(/^[\x21-\x7e]+$/).refine(v=>!v.includes(':')),apiPassword:z.string().min(1).max(500).regex(/^[\x20-\x7e]+$/),publicApiKey:publicApiKey.optional()});
 type Credentials=z.infer<typeof credentialsSchema>;
 type Saved=Credentials&{verifiedAt:string};
 export class EwayError extends Error{constructor(message:string,public status=400){super(message);}}
 export function parseEwayCredentials(value:unknown):Credentials{
- const result=credentialsSchema.safeParse(value);if(!result.success)throw new EwayError('Select Test or Live and enter your eWAY API Key and API Password.');return result.data;
+ const result=credentialsSchema.safeParse(value);if(!result.success)throw new EwayError('Select Test or Live and enter your eWAY API Key, API Password and Public API Key.');return result.data;
 }
 async function encryptionKey(){
  // Domain-separated derivation from the existing server encryption secret.
@@ -23,7 +24,7 @@ export async function getEwayCredentials():Promise<Saved|null>{
  const object=await env.BUCKET?.get(storagePath);if(!object)return null;
  try{const value=await object.json<{version:number;iv:number[];data:number[]}>();if(value.version!==1)throw Error();const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(value.iv),additionalData:encoded.encode(storagePath)},await encryptionKey(),new Uint8Array(value.data));const data=JSON.parse(new TextDecoder().decode(raw));return {...parseEwayCredentials(data),verifiedAt:z.string().datetime().parse(data.verifiedAt)};}catch{throw new EwayError('The saved eWAY connection could not be unlocked. Enter both credentials again to replace it.',503);}
 }
-export async function ewayStatus(){const saved=await getEwayCredentials();return {configured:!!saved,mode:saved?.mode||'sandbox',verifiedAt:saved?.verifiedAt||null,paymentsEnabled:saved?.mode==='live',testPaymentsEnabled:saved?.mode==='sandbox',secureStorageReady:!!(env.BUCKET&&(env.EWAY_CREDENTIAL_KEY||env.HUBSPOT_CREDENTIAL_KEY))};}
+export async function ewayStatus(){const saved=await getEwayCredentials();return {configured:!!saved,mode:saved?.mode||'sandbox',verifiedAt:saved?.verifiedAt||null,paymentsEnabled:saved?.mode==='live'&&!!saved.publicApiKey,testPaymentsEnabled:saved?.mode==='sandbox'&&!!saved.publicApiKey,secureFieldsReady:!!saved?.publicApiKey,publicApiKey:saved?.publicApiKey||null,secureStorageReady:!!(env.BUCKET&&(env.EWAY_CREDENTIAL_KEY||env.HUBSPOT_CREDENTIAL_KEY))};}
 export async function testEwayConnection(credentials:Credentials){
  // A read-only lookup of a fresh, nonexistent invoice tests authentication.
  // It never creates an access code, charges a card, or returns transaction data.
@@ -42,7 +43,7 @@ export async function testEwayConnection(credentials:Credentials){
  return new Date().toISOString();
 }
 export async function saveEwayConnection(value:unknown){
- const credentials=parseEwayCredentials(value),key=await encryptionKey(),verifiedAt=await testEwayConnection(credentials);
+ const credentials=parseEwayCredentials(value);if(!credentials.publicApiKey)throw new EwayError('Enter the eWAY Public API Key used for Secure Fields.');const key=await encryptionKey(),verifiedAt=await testEwayConnection(credentials);
  const iv=crypto.getRandomValues(new Uint8Array(12));
  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:encoded.encode(storagePath)},key,encoded.encode(JSON.stringify({...credentials,verifiedAt})));
  await env.BUCKET!.put(storagePath,JSON.stringify({version:1,iv:Array.from(iv),data:Array.from(new Uint8Array(encrypted))}),{httpMetadata:{contentType:'application/json'}});
