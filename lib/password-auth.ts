@@ -3,7 +3,7 @@ import {db} from './store';
 
 const sessionCookie='__Host-verdex-session';
 const sessionSeconds=12*60*60;
-const passwordIterations=210000;
+const passwordIterations=100000;
 const encoder=new TextEncoder();
 
 export type PasswordFields={password_hash:string;password_salt:string;password_iterations:number};
