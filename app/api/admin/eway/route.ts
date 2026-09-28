@@ -11,7 +11,7 @@ export async function POST(r:Request){
   const reader=r.body?.getReader();if(!reader)return json({error:'Missing request.'},400);let raw='',size=0;const decoder=new TextDecoder();
   try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>4096)return json({error:'Request is too large.'},413);raw+=decoder.decode(part.value,{stream:true});}raw+=decoder.decode();}finally{await reader.cancel();reader.releaseLock();}
   let body:any;try{body=JSON.parse(raw);}catch{return json({error:'Invalid request.'},400);}
-  if(body?.action==='connect'){const status=await saveEwayConnection(body);return json({...status,message:status.testPaymentsEnabled?'eWAY credentials verified and saved. Sandbox checkout payments are enabled. No real money is taken.':'eWAY credentials verified and saved. Save separate Test (Sandbox) credentials to test checkout payments. Live payments are not enabled.'});}
+  if(body?.action==='connect'){const status=await saveEwayConnection(body);return json({...status,message:status.paymentsEnabled?'eWAY live credentials verified and saved. Live checkout card payments are enabled.':'eWAY Sandbox credentials verified and saved. Test checkout payments are enabled. No real money is taken.'});}
   if(body?.action==='test'){const saved=await getEwayCredentials();if(!saved)throw new EwayError('Save an eWAY connection first.');await testEwayConnection(saved);return json({message:'Saved eWAY credentials verified. No payment was taken.'});}
   if(body?.action==='disconnect'){await disconnectEway();return json({configured:false,mode:'sandbox',verifiedAt:null,paymentsEnabled:false,message:'eWAY disconnected.'});}
   return json({error:'Invalid eWAY action.'},400);

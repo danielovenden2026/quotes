@@ -23,7 +23,7 @@ export async function getEwayCredentials():Promise<Saved|null>{
  const object=await env.BUCKET?.get(storagePath);if(!object)return null;
  try{const value=await object.json<{version:number;iv:number[];data:number[]}>();if(value.version!==1)throw Error();const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(value.iv),additionalData:encoded.encode(storagePath)},await encryptionKey(),new Uint8Array(value.data));const data=JSON.parse(new TextDecoder().decode(raw));return {...parseEwayCredentials(data),verifiedAt:z.string().datetime().parse(data.verifiedAt)};}catch{throw new EwayError('The saved eWAY connection could not be unlocked. Enter both credentials again to replace it.',503);}
 }
-export async function ewayStatus(){const saved=await getEwayCredentials();return {configured:!!saved,mode:saved?.mode||'sandbox',verifiedAt:saved?.verifiedAt||null,paymentsEnabled:false,testPaymentsEnabled:saved?.mode==='sandbox',secureStorageReady:!!(env.BUCKET&&(env.EWAY_CREDENTIAL_KEY||env.HUBSPOT_CREDENTIAL_KEY))};}
+export async function ewayStatus(){const saved=await getEwayCredentials();return {configured:!!saved,mode:saved?.mode||'sandbox',verifiedAt:saved?.verifiedAt||null,paymentsEnabled:saved?.mode==='live',testPaymentsEnabled:saved?.mode==='sandbox',secureStorageReady:!!(env.BUCKET&&(env.EWAY_CREDENTIAL_KEY||env.HUBSPOT_CREDENTIAL_KEY))};}
 export async function testEwayConnection(credentials:Credentials){
  // A read-only lookup of a fresh, nonexistent invoice tests authentication.
  // It never creates an access code, charges a card, or returns transaction data.
@@ -46,6 +46,6 @@ export async function saveEwayConnection(value:unknown){
  const iv=crypto.getRandomValues(new Uint8Array(12));
  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:encoded.encode(storagePath)},key,encoded.encode(JSON.stringify({...credentials,verifiedAt})));
  await env.BUCKET!.put(storagePath,JSON.stringify({version:1,iv:Array.from(iv),data:Array.from(new Uint8Array(encrypted))}),{httpMetadata:{contentType:'application/json'}});
- return {configured:true,mode:credentials.mode,verifiedAt,paymentsEnabled:false,testPaymentsEnabled:credentials.mode==='sandbox',secureStorageReady:true};
+ return {configured:true,mode:credentials.mode,verifiedAt,paymentsEnabled:credentials.mode==='live',testPaymentsEnabled:credentials.mode==='sandbox',secureStorageReady:true};
 }
 export async function disconnectEway(){await env.BUCKET?.delete(storagePath);}
