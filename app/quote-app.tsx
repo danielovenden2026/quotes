@@ -73,7 +73,12 @@ async function saveCheckout(details:CheckoutDetails,refresh:boolean){
 const [freightToolbar,setFreightToolbar]=useState<HTMLSpanElement|null>(null),[freightFeedback,setFreightFeedback]=useState<HTMLDivElement|null>(null);
 const freightBaselines=useRef(new Map<string,string>());
 const [usersOpen,setUsersOpen]=useState(false);
-const [permissions,setPermissions]=useState<Permissions>(sharedDemo?allPermissions:noPermissions),[requiresTwoFactor,setRequiresTwoFactor]=useState(false),[accessReady,setAccessReady]=useState(sharedDemo),[highValueCents,setHighValueCents]=useState(1000000),[minimumSavePct,setMinimumSavePct]=useState(20);
+const [permissions,setPermissions]=useState<Permissions>(sharedDemo?allPermissions:noPermissions),
+  [requiresTwoFactor,setRequiresTwoFactor]=useState(false),
+  [accessReady,setAccessReady]=useState(sharedDemo),
+  [currentUserName,setCurrentUserName]=useState(''),
+  [highValueCents,setHighValueCents]=useState(1000000),
+  [minimumSavePct,setMinimumSavePct]=useState(20);
 const [connectionsOpen,setConnectionsOpen]=useState(false);
 const [quotesOpen,setQuotesOpen]=useState(false),[quotesLoading,setQuotesLoading]=useState(false),[quotesError,setQuotesError]=useState('');
 const demoImageUrls=useRef<string[]>([]);useEffect(()=>()=>{demoImageUrls.current.forEach(url=>URL.revokeObjectURL(url));},[]);
