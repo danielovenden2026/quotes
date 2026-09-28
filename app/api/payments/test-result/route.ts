@@ -4,6 +4,7 @@ import {EwayError} from '@/lib/eway';
 import {readEwayPayment,verifyEwayPayment} from '@/lib/eway-payment';
 import {db} from '@/lib/store';
 import type {Quote} from '@/lib/quote';
+import {createOrderFromQuote} from '@/lib/orders';
 
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:privateHeaders});
 
@@ -32,6 +33,7 @@ export async function POST(r:Request){
  try{
   const payment=await verifyEwayPayment(p);
   const q=payment.mode==='live'&&payment.status==='succeeded'?await markLivePaymentAccepted(p,record,payment.transactionId):record.quote;
-  return json({...payment,quoteNumber:q.number,quoteChanged:q.version!==p.quote_version&&q.status!=='Accepted',quoteStatus:q.status});
+  const order=payment.mode==='live'&&payment.status==='succeeded'&&q.status==='Accepted'?await createOrderFromQuote({quote:q,owner:record.owner,paymentMethod:'card',paymentStatus:'Paid',paymentReference:payment.transactionId}):null;
+  return json({...payment,quoteNumber:q.number,quoteChanged:q.version!==p.quote_version&&q.status!=='Accepted',quoteStatus:q.status,orderNumber:order?.order_number||null,orderId:order?.public_id||null});
  }catch(e){return json({error:e instanceof EwayError?e.message:'The payment result could not be checked. Please try again.'},e instanceof EwayError?e.status:503);}
 }
