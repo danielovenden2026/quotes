@@ -41,5 +41,13 @@ export const ewayTestPayments=sqliteTable('eway_test_payments',{
  transactionId:text('transaction_id'), responseCode:text('response_code'), created:text('created').notNull(), updated:text('updated').notNull(),
 },table=>[uniqueIndex('idx_eway_test_quote_version').on(table.quoteId,table.quoteVersion)]);
 
+export const orders=sqliteTable('orders',{
+ id:integer('id').primaryKey({autoIncrement:true}),publicId:text('public_id').notNull().unique(),orderNumber:text('order_number').unique(),
+ owner:text('owner').notNull(),quoteId:text('quote_id').notNull(),quoteNumber:text('quote_number').notNull(),quoteRevision:integer('quote_revision').notNull(),
+ customerEmail:text('customer_email').notNull(),company:text('company').notNull(),contact:text('contact').notNull(),total:integer('total').notNull(),
+ paymentMethod:text('payment_method').notNull(),paymentStatus:text('payment_status').notNull(),paymentReference:text('payment_reference'),
+ status:text('status').notNull().default('New Order'),data:text('data').notNull(),created:text('created').notNull(),updated:text('updated').notNull(),enteredExoAt:text('entered_exo_at'),
+},table=>[uniqueIndex('orders_quote_revision_unique').on(table.quoteId,table.quoteRevision),index('idx_orders_owner_created').on(table.owner,table.created),index('idx_orders_customer_email_created').on(table.customerEmail,table.created)]);
+
 export const workspaceSessions=sqliteTable('workspace_sessions',{hash:text('hash').primaryKey(),userId:text('user_id').notNull(),userVersion:integer('user_version').notNull(),expires:integer('expires').notNull(),created:integer('created').notNull()},table=>[index('idx_workspace_sessions_user').on(table.userId),index('idx_workspace_sessions_expiry').on(table.expires)]);
 export const authLoginAttempts=sqliteTable('auth_login_attempts',{email:text('email').primaryKey(),attempts:integer('attempts').notNull().default(0),windowStart:integer('window_start').notNull(),lockedUntil:integer('locked_until').notNull().default(0)});
