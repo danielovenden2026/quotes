@@ -4,7 +4,9 @@ import {RefreshCw,Search,PackageCheck,ArrowRight} from 'lucide-react';
 import {Table,TableHeader,TableHead,TableRow,TableBody,TableCell} from '@/components/ui/table';
 import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from '@/components/ui/select';
 import {money} from '@/lib/quote';
-import {orderStatuses,type OrderRecord,type OrderStatus} from '@/lib/orders';
+const orderStatuses=['New Order','Entered to EXO','Processing','Dispatched','Completed'] as const;
+type OrderStatus=typeof orderStatuses[number];
+type OrderRecord={public_id:string;order_number:string|null;quote_id:string;quote_number:string;quote_revision:number;customer_email:string;company:string;contact:string;total:number;payment_method:string;payment_status:string;payment_reference:string|null;status:OrderStatus;created:string;updated:string;entered_exo_at:string|null;};
 import {toast} from 'sonner';
 
 export default function OrdersWorkspace(){
