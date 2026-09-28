@@ -24,6 +24,8 @@ export async function PATCH(r:Request,{params}:any){
   if(!record)return json({error:'This quotation link is invalid or no longer available.'},404);
   const body=await r.json() as any;
   if(!['customer','customer-freight','checkout-save','message','decline','accept'].includes(body.action))return json({error:'This action is not available from a customer link.'},403);
+  if(body.action==='message')body.staff=false;
+  if(body.action==='accept'&&body.payment!=='account')return json({error:'Card checkout must be completed through the secure payment page.'},400);
   const current=record.quote;
   const q=body.action==='customer-freight'?await refreshCustomerFreight(current,body):applyQuoteAction(current,body);
   if(['customer','customer-freight','checkout-save'].includes(body.action)&&totals(q).total>totals(current).total&&totals(q).total>(await getApprovalSettings()).highValueCents){
@@ -32,7 +34,7 @@ export async function PATCH(r:Request,{params}:any){
   const at=new Date().toISOString();
   const res=await db().prepare('UPDATE quotes SET data=?,version=?,updated=? WHERE id=? AND owner=? AND version=?').bind(JSON.stringify(q),q.version,at,q.id,record.owner,body.version).run();
   if(!res.meta.changes)return json({error:'This quotation changed in another window. Reload it and try again.'},409);
-  if(body.action==='accept'&&q.status==='Accepted'&&q.payment==='account'){
+  if(body.action==='accept'&&q.status==='Accepted'&&q.payment==='account'){q.events[q.events.length-1].text='Customer accepted quotation on account'+(q.po?' · PO '+q.po:'');
    try{await createOrderFromQuote({quote:q,owner:record.owner,paymentMethod:'account',paymentStatus:'Account terms',paymentReference:q.po||null});}catch(e){console.error('Public account order creation failed',e);}
   }
   return json(customerView(q));
