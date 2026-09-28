@@ -1,0 +1,71 @@
+{
+  "base": "Verdex Quotes Work Site v129",
+  "production_database_id": "a55a5bcb-f093-498f-a315-5a45c9789a0a",
+  "modified_files": [
+    {
+      "path": "lib/request-auth.ts",
+      "sha256": "7e0adc3d88070771416c4a70ce8c054d9366b3a09df819566a2b7b136eaca1d9",
+      "bytes": 1510
+    },
+    {
+      "path": "lib/store.ts",
+      "sha256": "01f945ad659014f89613892018cb98bef41b7dfccf93d86a5769a1b9af24cc36",
+      "bytes": 958
+    },
+    {
+      "path": "app/chatgpt-auth.ts",
+      "sha256": "2a55cd013c493339741d1a4cbf2f3377199f725ee085d2ce6bc2e8e1fd5b8ddc",
+      "bytes": 2533
+    },
+    {
+      "path": "lib/workspace-access.ts",
+      "sha256": "74222cc8e89501262389fc4433ad0650bfb4125b001354b3c1c653c8ecd32b84",
+      "bytes": 4354
+    },
+    {
+      "path": "lib/admin-access.ts",
+      "sha256": "41bef2700ebeeafe48f8b109b6f4663cb8dcb8c8410eec1b4577d18bce79d213",
+      "bytes": 900
+    },
+    {
+      "path": "app/admin/access/route.ts",
+      "sha256": "e6f7058abae794fccde6b5f761a751f6c34adafe6b06f1354da94f90274e3afe",
+      "bytes": 1517
+    },
+    {
+      "path": "app/api/admin/magento-freight/route.ts",
+      "sha256": "05e6ea83ddfbc60ea9ca2604da50587287dfe7136235c4132e0a1df49bcb5ccd",
+      "bytes": 3410
+    },
+    {
+      "path": "app/api/product-images/[id]/route.ts",
+      "sha256": "80ee2a1d4cd56a6274659b50c49a7b0483118e1472f7f256d828ddf04ec0db56",
+      "bytes": 1343
+    },
+    {
+      "path": "lib/margin-review.ts",
+      "sha256": "806ff7f67191d211e9f10381826d8cc2203e2f7c5d32d5cff80a31887a2d5240",
+      "bytes": 1356
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "b724b610fd250c0993509417f489b6d3a7a38c1cdb1db9d8e26e1e2ea2210aa2",
+      "bytes": 2345
+    },
+    {
+      "path": ".env.example",
+      "sha256": "95cdab38172a759f2383933d620e97703cb708281e1603bded1d9d7a35e01300",
+      "bytes": 901
+    },
+    {
+      "path": "cloudflare-production-migrations-0002-to-0007.sql",
+      "sha256": "3c0c9394256527218b90dcd10bf24c43cd9d3843bfa21a355ad983dff0271dd7",
+      "bytes": 2315
+    },
+    {
+      "path": "CLOUDFLARE-PRODUCTION-README.md",
+      "sha256": "fb385ab208ee8a0b49eb7ad78b48b3d53101451d49accf74d259c13d73843c99",
+      "bytes": 3455
+    }
+  ]
+}

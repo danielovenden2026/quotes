@@ -15,6 +15,48 @@
       "when": 1790072065078,
       "tag": "0001_heavy_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790138762963,
+      "tag": "0002_modern_mister_sinister",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790146058000,
+      "tag": "0003_supreme_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790157306578,
+      "tag": "0004_furry_captain_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790312497519,
+      "tag": "0005_greedy_red_ghost",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790314625531,
+      "tag": "0006_lazy_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790465345678,
+      "tag": "0007_gray_iron_lad",
+      "breakpoints": true
     }
   ]
 }

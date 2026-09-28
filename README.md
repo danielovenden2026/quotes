@@ -84,3 +84,84 @@ Sales workspace includes Line GP% and an Overall product GP% panel directly abov
 GP recalculates after a 350ms pause when quoted prices, quantities, selections or items change, using unsaved draft inputs. Old highlighting and figures are suppressed while inputs change. Inputs contain no costs. Calculation and numeric output stay server-side in authenticated script-free iframe responses submitted via POST, with private/no-store headers. Only authenticated threshold flags (low SKUs) reach parent JavaScript for row colouring. Neither costs nor numeric GP are added to quote records, customer responses, PDFs, history or public demos. Server-side allowlist checks apply to both GP endpoints on every request, with same-origin checks and bounded item validation.
 
 Product detail descriptions preserve paragraphs, bulleted/numbered lists, emphasis, headings and basic tables from HTML inside XML CDATA. Scripts, event handlers, inline styles, embedded content and unsafe elements are removed with sanitize-html before rendering. No post-sanitisation entity decoding is performed. The existing script-free iframe sandbox and CSP remain in place.
+
+## Sales table preferences (version 20)
+
+Sales product rows show a small thumbnail to the left of the product name, with
+an icon fallback when no image is available. Saved item images are preferred;
+the current feed can supply images missing from older quote items.
+
+Columns opens a visibility chooser. Product stays visible; the other columns
+can be hidden independently. Heading-edge handles resize neighbouring visible
+columns while keeping total table width fixed; focused handles also respond to
+left/right arrow keys. Narrow screens retain the labelled card layout.
+Save view stores only column IDs and width preferences in localStorage for the
+current browser, across quotes and reloads. No quote or cost values are stored
+there. Restore defaults previews the default layout; Save view persists it.
+These preferences do not grant cost/GP access or alter quote data/customer pages.
+
+### Ad hoc quote products (v21)
+
+Authorised cost admins can choose **Ad hoc product** in Sales Workspace (also available under Add product). Enter a unique SKU, name, unit cost, sell price, quantity and optional PNG/JPEG/WebP image up to 2 MB; then save the quote. Prices exclude GST. Custom products belong to their quote and do not modify the Magento feed. Their starting sell price is the standard price; quoted price remains editable. Custom items support optional selection, reordering, customer preview and GP calculation.
+
+D1 `adhoc_products` holds private unit costs separately from quote JSON; R2 `BUCKET` holds image bytes. The native form sends cost directly to an authorised server endpoint. Customer-safe metadata explicitly omits costs. Unit Cost and GP continue to render only in authorised, script-free sandboxed frames. Uploads reject unsupported formats/oversize bodies. Image access is restricted to the quote owner, consistent with the current signed-in customer preview (external customer sharing remains unimplemented). Abandoned custom records/uploads are retained for recovery and are not a shared product catalogue.
+
+Validation: `node scripts/test-adhoc.cjs` covers creation, validation, images, duplicate feed SKUs, ownership, cost projection, quote save and custom GP. Existing cost, GP and description suites remain applicable.
+
+### Address fields and cost viewing (v24)
+
+Sales Workspace now stores street address (`address`), suburb, state/territory and postcode separately. Customer view and PDF use the combined address. Australian states/territories are validated against the eight choices; nonblank postcodes require four digits and preserve leading zeros. Existing combined addresses are preserved as entered until manually split; no guessed migration is applied.
+
+At the owner's request, cost/GP viewing now requires sign-in rather than membership in `COST_ADMIN_USER_IDS`. This supersedes earlier admin-only viewing guidance: all authenticated Sales Workspace users can view feed Unit Cost and GP. Anonymous/public demo requests cannot access them. Costs still use server-side lookup and private script-free frames; quote JSON, customer view and PDFs still exclude costs and GP. Custom-product creation remains controlled by the existing admin permission, independently of cost viewing. Custom costs/images retain quote-owner isolation. `/admin/access` reports workspace cost access.
+
+### Public demo costs and GP (v26)
+
+`/demo` now shows clearly labelled fictional Unit Costs, line GP%, orange rows below 40%, and weighted overall product GP in Sales Workspace. Sample SKUs have fixed synthetic costs; new feed products use 60% of their standard price as an illustrative cost. Changing the quoted price does not change that cost basis. Unpriced products without a standard price show N/A. The calculation core is shared with the signed-in workspace, but the demo makes no cost/GP API requests and cannot access the private source. Customer view and PDFs continue to exclude costs and GP. Demo changes reset on refresh.
+
+
+## v27 — Stock columns and quotation identity
+
+The Costs sheet now imports by header: SKU, Average Cost, Total Stock, Melbourne, Brisbane and Sydney. Latest Cost is ignored. SKU matching trims spaces and ignores case. Missing/invalid stock stays N/A; zero remains zero. Total Stock is imported directly rather than calculated from location balances. The existing server-side cache applies (15 minutes). The authenticated stock endpoint only returns requested Magento SKU stock fields, never cost records. All four stock columns support the existing column visibility and saved-width controls. The public demo uses clearly labelled fictional stock.
+
+Customer headings use the immutable quote number and greet the company with “Please see your quotation below.” Vendor Number is an optional, trimmed, max-100-character field in Customer & quotation. It persists with the quote and revisions and appears near the quote number in customer view and in the PDF when filled in. Older quotes default to blank.
+
+
+## v28 — Shared demo for VQ-ECBE1BD3
+
+`/demo/vq-ecbe1bd3` serves a test copy of the specifically authorised quote. Each fresh visit reads its latest saved customer/product fields; edits stay in that visitor's in-memory demo store and never reach saved quotes. The original Draft/Ready status is preserved. This fixed route cannot retrieve other quote IDs. An explicit projection excludes activity, revision snapshots, acceptance identities, custom-product private identifiers and arbitrary source properties; Magento admin URLs are omitted. Costs, GP and stock in the shared demo remain fictional as labelled. The generic `/demo` remains unchanged.
+
+
+## v29 — Live figures on the explicitly shared demo
+
+The owner explicitly authorised public display of live costs, GP and stock on `/demo/vq-ecbe1bd3`. Its Sales workspace now has **Refresh costs and GP**, which reloads the server-side Google Sheet cache before reloading cost, GP and stock displays. Only SKUs saved on this specific quote can disclose live figures; newly added temporary products show N/A until included in the saved shared quote. Ordinary `/demo` keeps fictional figures.
+
+Public demo metric routes project only stock and low-GP flags as JSON. Costs and numeric GP still render in sandboxed HTML without scripts. The fixed server-side quote lookup determines eligible feed SKUs and any custom cost records; clients cannot supply another quote ID or private custom-product ID. Existing authenticated workspace routes and private quotes retain their access checks. Anyone with the public quote demo link can view its live figures, as authorised. Test edits remain isolated from the original quote.
+
+The breadcrumb row (All quotations, quote/revision and workflow status) is now restricted to Sales Workspace. Customer view keeps the quote number and optional Vendor Number in its quotation header.
+
+
+## v30 — Edit ad hoc products, image galleries and customer terms
+
+Ad hoc products have an Edit product button for authorised admins while the quote is a draft or has changes requested. Product name, optional replacement cost, and up to eight images can be edited. Blank cost retains the current cost; zero is supported. Quoted price, quantity, optional selection and notes stay unchanged. Apply product changes, then Save draft to persist the quote.
+
+Edits insert immutable custom-product versions linked by a private family ID. Save validation permits replacement only within that family and quote/owner. Earlier revisions retain their original custom cost and image references. Images are PNG/JPEG/WebP up to 2 MB each, with stream limits, file signatures, failure cleanup, and ownership checks. Existing single-image records remain compatible. Customer View details includes a thumbnail gallery with previous/next controls. Images on the explicitly shared demo are scoped to its saved custom products. Public metadata excludes cost, storage keys and family IDs.
+
+The customer greeting now uses the contact name; the company name appears above the delivery address. Optional Customer terms (for example, 30 DAYS EOM) is saved separately from quotation terms and shown in the customer header, shared demo and PDF.
+
+
+### Workspace contact details and second-factor setup
+
+Users require name, sign-in email and business phone when saved. Mobile is optional, private to user administration and verification, and normalizes Australian `04...` numbers to `+614...`. Existing profiles are retained with blank phone until edited. The protected original administrator can edit their contact details but cannot be disabled or demoted.
+
+New quotes snapshot the signed-in user's business name, email and phone. `Create quotes on behalf of other users` enables Prepared By in Customer & quotation. Selecting an enabled quote creator fills in their business contact details from the server. It changes customer/PDF attribution, not quote ownership or other permissions. Historical saved quotes retain their contact snapshot; mobile numbers are never copied onto quotes.
+
+Email/SMS verification is implemented as an additional server-enforced step after native ChatGPT sign-in; it is **disabled until a real delivery service is configured and tested**. No code delivery service is included with hosting.
+
+1. Create a Twilio Verify service with six-digit codes. Enable SMS and configure its email channel with a verified SendGrid sender/integration: https://www.twilio.com/docs/verify/email . Ensure destination countries and account sending limits allow your users.
+2. Have the hosting administrator add server-only runtime secrets `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_VERIFY_SERVICE_SID`. Keep `TWO_FACTOR_REQUIRED=false`. Never add credentials to frontend code or source control.
+3. In Users, add a real mobile to the administrator profile. Use **Test verification code** to test both email and SMS. Also check an email-only account. Test sends go only to the current signed-in user's saved destinations.
+4. Only after both channels work, set `TWO_FACTOR_REQUIRED=true` in hosted runtime settings. Users then choose email or mobile after ChatGPT sign-in. Email remains available when mobile is blank. Hosting administrators can set it back to false for provider outage recovery; there is no public bypass or fallback code.
+
+OTP requests are bound to a registered active identity, rate limited to one send per minute/five per hour and five checks per challenge. Verification sessions last eight hours, use a Secure/HttpOnly/SameSite cookie, and are invalidated by user profile/permission changes or disabling a user. The provider validates one-use codes; credentials, raw codes and mobile destinations are never returned by quote APIs. Public demonstration pages remain intentionally public and are not protected by this staff-only challenge.
+
+`node scripts/test-workspace-permissions.cjs` exercises SQLite migrations, required fields, attribution restrictions and mocked provider verification. Those tests do not establish live email/SMS deliverability.

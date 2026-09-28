@@ -1,5 +1,5 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
 
 export type ChatGPTUser = {
   userId: string;
@@ -8,34 +8,37 @@ export type ChatGPTUser = {
   fullName: string | null;
 };
 
-const USER_ID_HEADER = "oai-authenticated-user-id";
-const USER_EMAIL_HEADER = "oai-authenticated-user-email";
-const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
-const USER_FULL_NAME_ENCODING_HEADER =
-  "oai-authenticated-user-full-name-encoding";
-const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
-const SIGN_IN_PATH = "/signin-with-chatgpt";
-const SIGN_OUT_PATH = "/signout-with-chatgpt";
-const CALLBACK_PATH = "/callback";
+const CF_EMAIL_HEADER = 'cf-access-authenticated-user-email';
+const LEGACY_USER_ID_HEADER = 'oai-authenticated-user-id';
+const LEGACY_EMAIL_HEADER = 'oai-authenticated-user-email';
+const LEGACY_FULL_NAME_HEADER = 'oai-authenticated-user-full-name';
+const LEGACY_FULL_NAME_ENCODING_HEADER =
+  'oai-authenticated-user-full-name-encoding';
+const PERCENT_ENCODED_UTF8 = 'percent-encoded-utf-8';
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
-  const userId = requestHeaders.get(USER_ID_HEADER);
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
+  const email = (
+    requestHeaders.get(CF_EMAIL_HEADER) ||
+    requestHeaders.get(LEGACY_EMAIL_HEADER)
+  )
+    ?.trim()
+    .toLowerCase();
+  if (!email) return null;
 
-  const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
+  const userId = requestHeaders.get(LEGACY_USER_ID_HEADER)?.trim() || email;
+  const encodedFullName = requestHeaders.get(LEGACY_FULL_NAME_HEADER);
   const fullName =
     encodedFullName &&
-    requestHeaders.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
+    requestHeaders.get(LEGACY_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
       ? safeDecodeURIComponent(encodedFullName)
-      : null;
+      : encodedFullName;
 
   return {
     userId,
     displayName: fullName ?? email,
     email,
-    fullName,
+    fullName: fullName ?? null,
   };
 }
 
@@ -45,40 +48,31 @@ export async function requireChatGPTUser(
   const user = await getChatGPTUser();
   if (user) return user;
 
-  redirect(chatGPTSignInPath(returnTo));
+  // On the independent deployment, Cloudflare Access owns the sign-in flow.
+  // A missing identity generally means the request did not pass through the
+  // Access application. Returning to the requested route lets Access challenge
+  // the browser once the application policy is correctly attached.
+  redirect(safeRelativeReturnPath(returnTo));
 }
 
 export function chatGPTSignInPath(returnTo: string): string {
-  const safeReturnTo = safeRelativeReturnPath(returnTo);
-  return `${SIGN_IN_PATH}?return_to=${encodeURIComponent(safeReturnTo)}`;
+  return safeRelativeReturnPath(returnTo);
 }
 
-export function chatGPTSignOutPath(returnTo = "/"): string {
-  const safeReturnTo = safeRelativeReturnPath(returnTo);
-  return `${SIGN_OUT_PATH}?return_to=${encodeURIComponent(safeReturnTo)}`;
+export function chatGPTSignOutPath(returnTo = '/'): string {
+  return safeRelativeReturnPath(returnTo);
 }
 
 function safeRelativeReturnPath(value: string): string {
-  if (!value.startsWith("/") || value.startsWith("//")) return "/";
-
+  if (!value.startsWith('/') || value.startsWith('//')) return '/';
   let url: URL;
   try {
-    url = new URL(value, "https://app.local");
+    url = new URL(value, 'https://app.local');
   } catch {
-    return "/";
+    return '/';
   }
-  if (url.origin !== "https://app.local") return "/";
-  if (isReservedAuthPath(url.pathname)) return "/";
-
+  if (url.origin !== 'https://app.local') return '/';
   return `${url.pathname}${url.search}${url.hash}`;
-}
-
-function isReservedAuthPath(pathname: string): boolean {
-  return (
-    pathname === SIGN_IN_PATH ||
-    pathname === SIGN_OUT_PATH ||
-    pathname === CALLBACK_PATH
-  );
 }
 
 function safeDecodeURIComponent(value: string): string | null {

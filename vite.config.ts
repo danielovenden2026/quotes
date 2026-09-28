@@ -5,9 +5,10 @@ import { readExecutionProfile } from "./scripts/execution-profile.mjs";
 import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+  "a55a5bcb-f093-498f-a315-5a45c9789a0a";
 
 const { d1, r2 } = hostingConfig;
+const productionR2BucketName = process.env.VERDEX_R2_BUCKET_NAME?.trim();
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -25,11 +26,11 @@ const localBindingConfig = {
         },
       ]
     : [],
-  r2_buckets: r2
+  r2_buckets: r2 && productionR2BucketName
     ? [
         {
           binding: r2,
-          bucket_name: "site-creator-r2",
+          bucket_name: productionR2BucketName,
         },
       ]
     : [],

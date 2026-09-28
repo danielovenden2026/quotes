@@ -40,15 +40,27 @@ const item=(sku,qty=1,price=10000,optional=false,selected=true)=>({sku,qty,price
  const clean=parseMarginItems([{...item('A'),averageCost:0,gp:100}]);assert.equal(clean[0].averageCost,undefined);
  const api=load('app/api/admin/gp-status/route.ts'),frame=load('app/admin/gp/route.ts');
  function request(items,user='test-admin',origin='https://test.invalid',html=false){return new Request('https://test.invalid/'+(html?'admin/gp':'api/admin/gp-status'),{method:'POST',headers:{...(user?{'oai-authenticated-user-id':user,'oai-authenticated-user-email':'test@example.invalid'}:{}),origin,'Content-Type':html?'application/x-www-form-urlencoded':'application/json'},body:html?new URLSearchParams({items:JSON.stringify(items),kind:'summary'}):JSON.stringify({items})});}
- for(const user of ['', 'not-admin']){assert.equal((await api.POST(request([item('A')],user))).status,user?403:401);assert.equal((await frame.POST(request([item('A')],user,undefined,true))).status,user?403:401);}
+ for(const user of ['']){assert.equal((await api.POST(request([item('A')],user))).status,user?403:401);assert.equal((await frame.POST(request([item('A')],user,undefined,true))).status,user?403:401);}
  assert.equal(reads,0);
  assert.equal((await api.POST(request([item('A')],'test-admin','https://other.invalid'))).status,403);
  assert.equal((await frame.POST(request([item('A')],'test-admin','https://other.invalid',true))).status,403);
  assert.equal(reads,0);
  assert.equal((await api.POST(request([item('A',-1)]))).status,400);
- const response=await api.POST(request([item('A'),item('B')]));assert.deepEqual(await response.json(),{lowSkus:['B']});assert.match(response.headers.get('cache-control'),/no-store/);
+ const response=await api.POST(request([item('A'),item('B')]));assert.deepEqual(await response.json(),{targetPct:40,lowSkus:['B'],lowLines:['B']});assert.match(response.headers.get('cache-control'),/no-store/);
  const html=await frame.POST(request([item('A'),item('B',9)],'test-admin',undefined,true));const text=await html.text();assert.match(text,/22\.0%/);assert.match(text,/Below the 40% target/);assert.doesNotMatch(text,/<script|averageCost|latestCost|999/);assert.match(html.headers.get('content-security-policy'),/sandbox/);
  const missing=await frame.POST(request([item('A'),item('MISSING')],'test-admin',undefined,true));assert.match(await missing.text(),/N\/A/);
- config.COST_ADMIN_USER_IDS='';assert.equal((await frame.POST(request([item('A')],'test-admin',undefined,true))).status,403);
- console.log('PASS: weighted GP, exact 40% boundary, losses, zero/missing costs, optional/zero quantity handling, validation, admin/origin enforcement and script-free private rendering.');
+ config.COST_ADMIN_USER_IDS='';assert.equal((await frame.POST(request([item('A')],'not-admin',undefined,true))).status,200);assert.equal((await api.POST(request([item('A')],'not-admin'))).status,200);
+ const lowerTarget=calculateMargins([item('A')],costs,skus,undefined,35);
+ assert.equal(lowerTarget.overall.low,false);assert.match(lowerTarget.overall.reason,/35% target/);
+ const exact35=calculateMargins([item('A')],new Map([['A',{averageCost:65}]]),skus,undefined,35);assert.equal(exact35.lines[0].low,false);
+ const below35=calculateMargins([item('A')],new Map([['A',{averageCost:65.001}]]),skus,undefined,35);assert.equal(below35.overall.low,true);
+ const {formatMarginPct}=load('lib/margin-math.ts');assert.equal(formatMarginPct(below35.overall),'<35.0%');
+ config.BUCKET={get:async()=>({json:async()=>({targetPct:45})})};
+ const changedTarget=await api.POST(request([item('A')]));assert.deepEqual(await changedTarget.json(),{targetPct:45,lowSkus:['A'],lowLines:['A']});
+ const changedFrame=await frame.POST(request([item('A')],'test-admin',undefined,true));assert.match(await changedFrame.text(),/Below the 45% target/);
+ config.BUCKET={get:async()=>({json:async()=>({targetPct:35})})};
+ const lowered=await api.POST(request([item('A')]));assert.deepEqual(await lowered.json(),{targetPct:35,lowSkus:[],lowLines:[]});
+ config.BUCKET={get:async()=>{throw Error('storage unavailable');}};assert.equal((await api.POST(request([item('A')]))).status,503);
+ console.log('PASS: configurable target and exact boundary, server flags and frame reasons agree, settings read failures do not silently use the wrong target.');
+ console.log('PASS: weighted GP, exact 40% boundary, losses, zero/missing costs, optional/zero quantity handling, validation, signed-in access and origin enforcement and script-free private rendering.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

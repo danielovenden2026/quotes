@@ -1,0 +1,86 @@
+const fs=require('node:fs'),path=require('node:path'),ts=require('typescript'),assert=require('node:assert/strict'),{DatabaseSync}=require('node:sqlite');
+const root=path.resolve(__dirname,'..'),sql=new DatabaseSync(':memory:'),modules=new Map(),objects=new Map();
+for(const name of fs.readdirSync(path.join(root,'drizzle')).filter(n=>n.endsWith('.sql')).sort())sql.exec(fs.readFileSync(path.join(root,'drizzle',name),'utf8'));
+const DB={prepare(query){let args=[];const st={bind(...v){args=v;return st},async first(){return sql.prepare(query).get(...args)||null},async all(){return {results:sql.prepare(query).all(...args)}},async run(){const r=sql.prepare(query).run(...args);return {meta:{changes:Number(r.changes)}}}};return st;}};
+const config={DB,COST_ADMIN_USER_IDS:'root',BUCKET:{get:async k=>objects.has(k)?{json:async()=>JSON.parse(objects.get(k))}:null,put:async(k,v)=>objects.set(k,v)}};
+let failCosts=false;
+const source=new Map([['TEST',{averageCost:60,stock:{}}]]),products=[{sku:'TEST',name:'Test product',regularPrice:10000,price:10000,relatedSkus:[],otherSkus:[]}];
+function load(file){file=path.resolve(root,file);if(modules.has(file))return modules.get(file);if(file.endsWith('/lib/cost-data.ts'))return {getCosts:async()=>{if(failCosts)throw Error('Offline');return source;}};if(file.endsWith('/lib/catalogue-data.ts'))return {getCatalogue:async()=>({products})};if(file.endsWith('.json'))return JSON.parse(fs.readFileSync(file));const e={};modules.set(file,e);let js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText.replaceAll('import.meta.env.DEV','false');new Function('require','exports',js)(name=>{if(name==='server-only')return {};if(name==='cloudflare:workers')return {env:config};if(!name.startsWith('.')&&!name.startsWith('@/'))return require(name);const f=name.startsWith('@/')?path.resolve(root,name.slice(2)):path.resolve(path.dirname(file),name);return load(f+(name.endsWith('.json')?'':'.ts'));},e);return e;}
+const req=(id,body,path='/api/workspace/users',email=id+'@example.test')=>new Request('https://quote.test'+path,{method:body?'POST':'GET',headers:{'oai-authenticated-user-id':id,'oai-authenticated-user-email':email,origin:'https://quote.test','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+const {allPermissions,defaultPermissions,noPermissions}=load('lib/permissions.ts'),access=load('lib/workspace-access.ts'),users=load('app/api/workspace/users/route.ts'),quotes=load('app/api/quotes/route.ts'),detail=load('app/api/quotes/[id]/route.ts'),{newQuote}=load('lib/quote.ts');
+(async()=>{
+ assert.equal((await access.actor(req('root'))).permissions.superAdmin,true);
+ await assert.rejects(()=>access.actor(req('unknown')));
+ const add=async(id,permissions=defaultPermissions)=>{const r=await users.POST(req('root',{name:id,phone:'02 8866 4600',email:id+'@example.test',permissions,active:true,version:0}));assert.equal(r.status,200,await r.text());};
+ await add('sales');await add('approver',{...defaultPermissions,viewTeam:true,approveRestricted:true});await add('viewer',{...noPermissions,viewTeam:true});await add('nodiscount',{...defaultPermissions,applyDiscounts:false});
+ assert.equal((await access.actor(req('sales'))).permissions.superAdmin,false);assert.equal((await users.GET(req('sales'))).status,400);assert.equal((await quotes.POST(req('viewer',{demo:false}))).status,400);
+ const normal=await access.actor(req('sales'));assert.equal(normal.id,'sales');await assert.rejects(()=>access.actor(req('imposter',undefined,undefined,'sales@example.test')));
+ const view=await users.GET(req('root'));const list=(await view.json()).users;assert.equal(list.length,5);assert.ok(list.find(u=>u.email==='root@example.test').protected);
+ const line={sku:'TEST',name:'Test product',price:10000,standardPrice:10000,qty:1,baseQty:1,optional:false,selected:true,note:''};
+ function insert(owner,items=[line]){const q={...newQuote(true),id:crypto.randomUUID(),number:'VQ-TEST',items,status:'Draft',freight:0,handling:0,expiry:'2099-12-31'};sql.prepare('INSERT INTO quotes VALUES(?,?,?,?,?)').run(q.id,owner,1,JSON.stringify(q),new Date().toISOString());return q;}
+ const patch=async(id,q,action,quote)=>detail.PATCH(req(id,{action,version:q.version,...(quote?{quote}:{})},'/api/quotes/'+q.id),{params:Promise.resolve({id:q.id})});
+ let q=insert('sales');assert.equal((await detail.GET(req('nodiscount'),{params:{id:q.id}})).status,400);assert.equal((await detail.GET(req('approver'),{params:{id:q.id}})).status,200);
+ assert.equal((await quotes.GET(req('viewer'))).status,200);assert.equal((await patch('viewer',q,'save',q)).status,400);
+ let response=await patch('sales',q,'save',{...q,items:[{...line,price:7000}]});assert.equal(response.status,400);assert.match((await response.json()).error,/below 20%/);assert.equal(sql.prepare('SELECT version FROM quotes WHERE id=?').get(q.id).version,1);
+ response=await patch('approver',q,'save',{...q,items:[{...line,price:7000}]});assert.equal(response.status,200,await response.clone().text());let low=await response.json();assert.ok(low.events.some(e=>e.text.includes('Margin override')));
+ const gpStatusRoute=load('app/api/admin/gp-status/route.ts');
+ const statusResponse=await gpStatusRoute.POST(req('sales',{quoteId:low.id,items:low.items},'/api/admin/gp-status'));assert.equal(statusResponse.status,200);const statusFlags=await statusResponse.json();assert.equal(statusFlags.minimumSavePct,20);assert.deepEqual(statusFlags.blockedLines,['TEST'],'Below-minimum flag reaches UI even for a non-admin');
+ const boundaryResponse=await gpStatusRoute.POST(req('sales',{quoteId:low.id,items:[{...line,price:7500}]},'/api/admin/gp-status'));assert.deepEqual((await boundaryResponse.json()).blockedLines,[],'Exactly 20% does not block');
+ const duplicateResponse=await gpStatusRoute.POST(req('sales',{quoteId:low.id,items:[{...line,lineId:'11111111-1111-4111-8111-111111111111',price:7000},{...line,lineId:'22222222-2222-4222-8222-222222222222',price:10000}]},'/api/admin/gp-status'));assert.deepEqual((await duplicateResponse.json()).blockedLines,['11111111-1111-4111-8111-111111111111'],'Duplicate SKU lines highlight independently');
+ response=await patch('sales',low,'ready');assert.equal(response.status,400);response=await patch('approver',low,'ready');assert.equal(response.status,200);assert.ok((await response.json()).events.some(e=>e.text.includes('Approved by approver')));
+ q=insert('sales',[{...line,qty:100,baseQty:100}]);response=await patch('sales',q,'ready');assert.equal(response.status,400);assert.match((await response.json()).error,/exceeds/);
+ response=await patch('sales',q,'request-approval');assert.equal(response.status,200);q=await response.json();assert.equal(q.status,'Awaiting approval');response=await patch('approver',q,'ready');assert.equal(response.status,200);assert.equal((await response.json()).status,'Ready');
+ q=insert('nodiscount');response=await patch('nodiscount',q,'save',{...q,items:[{...line,discount:{type:'percent',value:5}}]});assert.equal(response.status,400);assert.match((await response.json()).error,/discount/);
+ const metrics=load('app/admin/unit-cost/route.ts'),gp=load('app/api/workspace/quote-gp/route.ts');assert.equal((await metrics.GET(req('viewer',undefined,'/admin/unit-cost?sku=TEST'))).status,403);assert.equal((await gp.GET(req('viewer'))).status,401);assert.equal((await metrics.GET(req('sales',undefined,'/admin/unit-cost?sku=TEST'))).status,200);
+ const settings=load('lib/gp-settings.ts'),approval=load('lib/approval-settings.ts');assert.equal((await settings.getGpSettings()).minimumSavePct,20);assert.equal((await approval.getApprovalSettings()).highValueCents,1000000);await settings.saveGpSettings({targetPct:40,minimumSavePct:35});await approval.saveApprovalSettings({highValueCents:2000000});assert.equal((await settings.getGpSettings()).minimumSavePct,35);assert.throws(()=>approval.parseApprovalSettings({highValueCents:-1}));
+ q=insert('sales',[{...line,price:8000}]);assert.equal((await patch('sales',q,'save',q)).status,400);
+ await add('creator',{...defaultPermissions,sendQuotes:false});q=insert('creator');assert.equal((await patch('creator',q,'ready')).status,400);
+ const connections=load('app/api/admin/connections/route.ts');assert.equal((await connections.POST(req('approver',{kind:'approval',action:'save',settings:{highValueCents:1}}))).status,403);
+ await settings.saveGpSettings({targetPct:40,minimumSavePct:20});await approval.saveApprovalSettings({highValueCents:1000000});
+ q=insert('sales',[{...line,price:909091}]);response=await patch('sales',q,'ready');assert.equal(response.status,200,'Exactly $10,000 incl GST does not need high-value approval');
+ q=insert('sales',[{...line,price:7500}]);response=await patch('sales',q,'save',q);assert.equal(response.status,200,'Exactly 20% GP can save');
+ q=insert('sales');const unknown={...q,items:[{...line,sku:'UNKNOWN'}]};response=await patch('sales',q,'save',unknown);assert.equal(response.status,200);q=await response.json();assert.equal((await patch('sales',q,'ready')).status,400);assert.equal((await patch('approver',q,'ready')).status,200);
+ const listing=await quotes.GET(req('nodiscount'));assert.ok((await listing.json()).every(q=>sql.prepare('SELECT owner FROM quotes WHERE id=?').get(q.id).owner==='nodiscount'));
+ response=await quotes.POST(req('creator',{demo:true}));assert.equal(response.status,200);assert.equal((await response.json()).status,'Draft','Sample creation must not bypass approval');
+ const customId=crypto.randomUUID();q=insert('sales',[{...line,adhocId:customId,price:7000}]);sql.prepare('INSERT INTO adhoc_products (id,owner,quote_id,sku,name,cost,price,qty,created) VALUES (?,?,?,?,?,?,?,?,?)').run(customId,'sales',q.id,'TEST','Custom test',6000,10000,1,new Date().toISOString());response=await patch('approver',q,'save',q);assert.equal(response.status,200,'Approver can save team custom products with the original owner cost');
+ const images=load('app/api/product-images/[id]/route.ts');assert.equal((await images.GET(req('nodiscount'),{params:{id:customId}})).status,503,'Team product images require quote access');
+
+ // Required profile fields are server-enforced, and optional mobiles are normalized.
+ const validUser={name:'Contact Test',email:'contact@example.test',phone:'02 8866 4600',mobile:'0412 345 678',permissions:defaultPermissions,active:true,version:0};
+ for(const field of ['name','email','phone']){const invalid={...validUser,[field]:'   '};assert.equal((await users.POST(req('root',invalid))).status,400,'Reject blank '+field);}
+ assert.equal((await users.POST(req('root',{...validUser,phone:'abc'}))).status,400);
+ assert.equal((await users.POST(req('root',{...validUser,mobile:'02 8866 4600'}))).status,400);
+ assert.equal((await users.POST(req('root',validUser))).status,200);assert.equal(sql.prepare('SELECT mobile FROM workspace_users WHERE email=?').get(validUser.email).mobile,'+61412345678');
+ const rootProfile=sql.prepare('SELECT * FROM workspace_users WHERE user_id=?').get('root');
+ assert.equal((await users.POST(req('root',{name:'Root Manager',email:rootProfile.email,phone:'02 8866 4600',mobile:'',permissions:allPermissions,active:true,version:rootProfile.version}))).status,200,'Protected admin can edit contact details');
+ response=await quotes.POST(req('sales',{demo:false}));assert.equal(response.status,200);const own=await response.json();assert.deepEqual(own.salesperson,{name:'sales',email:'sales@example.test',phone:'02 8866 4600'},'New quotes default to signed-in profile');
+ assert.equal((await quotes.POST(req('sales',{demo:false,onBehalfOf:'approver@example.test'}))).status,400);
+ const directory=load('app/api/workspace/quote-owners/route.ts');assert.equal((await directory.GET(req('sales'))).status,400);
+ const available=await (await directory.GET(req('root'))).json();assert.ok(available.users.every(u=>!('mobile' in u)&&!('permissions' in u)),'Directory exposes only business contact details');
+ q=insert('sales');response=await patch('sales',q,'save',{...q,salesperson:{email:'approver@example.test',name:'Spoof',phone:'999'}});assert.equal(response.status,400);
+ q=insert('root');response=await patch('root',q,'save',{...q,salesperson:{email:'approver@example.test',name:'Spoof',phone:'999'}});assert.equal(response.status,200);q=await response.json();assert.deepEqual(q.salesperson,{name:'approver',email:'approver@example.test',phone:'02 8866 4600'});assert.ok(q.events.some(e=>e.text.includes('Prepared By changed')));
+ assert.equal(sql.prepare('SELECT owner FROM quotes WHERE id=?').get(q.id).owner,'root','Prepared By changes attribution without transferring ownership');
+ // Two-factor integration uses a mocked provider; no real email or SMS is sent.
+ const mfa=load('lib/two-factor.ts'),otp=load('app/api/workspace/two-factor/route.ts');
+ config.TWO_FACTOR_REQUIRED='true';await assert.rejects(()=>access.actor(req('root')),/Verify your sign-in/);
+ assert.equal((await quotes.GET(req('root'))).status,400,'API is gated, including Super Administrator');
+ assert.equal((await (await otp.GET(req('root'))).json()).configured,false);
+ config.TWILIO_ACCOUNT_SID='AC'+'a'.repeat(32);config.TWILIO_AUTH_TOKEN='private-test-token';config.TWILIO_VERIFY_SERVICE_SID='VA'+'a'.repeat(32);
+ const savedFetch=global.fetch;let providerCalls=[];global.fetch=async(url,options)=>{providerCalls.push({url:String(url),body:String(options.body)});const params=new URLSearchParams(options.body);return Response.json(String(url).endsWith('/VerificationCheck')?{sid:params.get('VerificationSid'),status:params.get('Code')==='123456'?'approved':'pending'}:{sid:'VE'+'a'.repeat(32),status:'pending'});};
+ assert.equal((await otp.POST(req('root',{action:'send',channel:'sms'}))).status,400,'No SMS when optional mobile is empty');
+ assert.equal((await otp.POST(req('root',{action:'send',channel:'email'}))).status,200);assert.ok(providerCalls[0].body.includes('To=root%40example.test'));
+ assert.equal((await otp.POST(req('root',{action:'send',channel:'email'}))).status,400,'Cooldown enforced');
+ assert.equal((await otp.POST(req('root',{action:'verify',code:'000000'}))).status,400);
+ response=await otp.POST(req('root',{action:'verify',code:'123456'}));assert.equal(response.status,200);const cookie=response.headers.get('set-cookie');assert.ok(cookie.includes('HttpOnly')&&cookie.includes('Secure')&&cookie.includes('SameSite=Strict'));
+ const signed=req('root');signed.headers.set('cookie',cookie.split(';')[0]);assert.equal((await access.actor(signed)).permissions.superAdmin,true);
+ assert.equal((await otp.POST(req('root',{action:'verify',code:'123456'}))).status,400,'Codes cannot be replayed');
+ const stolen=req('approver');stolen.headers.set('cookie',cookie.split(';')[0]);await assert.rejects(()=>access.actor(stolen),'Sessions bound to identity');
+ sql.prepare('UPDATE workspace_users SET version=version+1 WHERE user_id=?').run('root');await assert.rejects(()=>access.actor(signed),'Profile changes revoke second-factor session');
+ assert.equal((await otp.POST(req('sales',{action:'send',channel:'email'}))).status,200);for(let n=0;n<5;n++)assert.equal((await otp.POST(req('sales',{action:'verify',code:'000000'}))).status,400);assert.equal((await otp.POST(req('sales',{action:'verify',code:'123456'}))).status,400,'Attempt limit enforced');
+ await access.identityActor(req('contact'));assert.equal((await otp.POST(req('contact',{action:'send',channel:'sms'}))).status,200);assert.ok(providerCalls.some(c=>c.body.includes('To=%2B61412345678')));
+ global.fetch=savedFetch;config.TWO_FACTOR_REQUIRED='false';
+ console.log('PASS: required user fields, optional mobile normalization, protected profile edits, on-behalf defaults/authorization/attribution, no mobile in quote contacts; provider-mocked email/SMS, cooldown, attempts, one-use verification, bound secure sessions and profile revocation.');
+ const userRow=sql.prepare('SELECT * FROM workspace_users WHERE email=?').get('sales@example.test');response=await users.POST(req('root',{name:'sales',phone:'02 8866 4600',email:'sales@example.test',permissions:defaultPermissions,active:false,version:userRow.version}));assert.equal(response.status,200);await assert.rejects(()=>access.actor(req('sales')));assert.equal((await quotes.GET(req('sales'))).status,400);
+ response=await users.POST(req('root',{name:'root',phone:'02 8866 4600',email:'root@example.test',permissions:noPermissions,active:false,version:1}));assert.equal(response.status,400);
+ console.log('PASS: actual SQLite migrations; registered identity binding, user CRUD/disable/protected admin, server permissions, team isolation/access, low GP blocks/audited overrides, high-value request/approval, discount restriction, cost privacy and configurable thresholds.');
+})().catch(e=>{console.error(e);process.exit(1)});

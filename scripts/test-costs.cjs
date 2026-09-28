@@ -25,10 +25,10 @@ function load(file) {
 (async () => {
   const {parseCsv,costRecords,createCostCache,createCostSource,limitedText} = load('lib/cost-source.ts');
   const parsed = costRecords(parseCsv('\uFEFF"SKU","Average Cost","Latest Cost"\r\n" v123 ","$1,234.5678","22.30"\r\nZERO,0,0\r\nBLANK,,\r\nBAD,abc,N/A\r\nDup,1,2\r\ndUP,3,4\r\n'));
-  assert.deepEqual(parsed.get('V123'), {averageCost:1234.5678, latestCost:22.3});
+  assert.deepEqual(parsed.get('V123'), {averageCost:1234.5678,stock:{totalStock:null,committedStock:null,melbourne:null,brisbane:null,sydney:null}});
   assert.equal(parsed.get('ZERO').averageCost, 0);
   assert.equal(parsed.get('BLANK').averageCost, null);
-  assert.equal(parsed.get('BAD').latestCost, null);
+  assert.equal(parsed.get('BAD').averageCost, null);
   assert.equal(parsed.get('DUP').averageCost, null);
   assert.equal(parsed.get('DUP').duplicate, true);
   assert.equal(parsed.has('UNKNOWN'), false);
@@ -37,6 +37,36 @@ function load(file) {
   assert.throws(()=>costRecords([['unexpected','headings']]));
   assert.throws(()=>createCostSource({COST_SOURCE_MODE:'oauth',COST_SHEET_ID:'some_id'}));
   await assert.rejects(limitedText(new Response('x'.repeat(5_000_001))));
+  const stockRows=costRecords(parseCsv('SKU,Average Cost,Total Stock,Melbourne,Brisbane,Sydney\n v123 ,12.34,100,25,0,75\nZERO,0,0,0,0,0\nMISSING,,,,,\nBAD,2,abc,$5,N/A,1.5\nDUP,1,2,3,4,5\ndup,6,7,8,9,10'));
+  assert.deepEqual(stockRows.get('V123'),{averageCost:12.34,stock:{totalStock:100,committedStock:null,melbourne:25,brisbane:0,sydney:75}});
+  assert.deepEqual(stockRows.get('ZERO').stock,{totalStock:0,committedStock:null,melbourne:0,brisbane:0,sydney:0});
+  assert.deepEqual(stockRows.get('MISSING').stock,{totalStock:null,committedStock:null,melbourne:null,brisbane:null,sydney:null});
+  assert.deepEqual(stockRows.get('BAD').stock,{totalStock:null,committedStock:null,melbourne:null,brisbane:null,sydney:1.5});
+  assert.deepEqual(stockRows.get('DUP').stock,stockRows.get('MISSING').stock);
+  const reordered=costRecords([['Sydney','SKU','Latest Cost','Brisbane',',Average Cost,','TotalStock','Melbourne'],['75',' v123 ','987654','0','12.34','100','25']]);
+  assert.deepEqual(reordered.get('V123'),stockRows.get('V123'));assert.equal('latestCost' in reordered.get('V123'),false);
+  assert.throws(()=>costRecords([['SKU','Average Cost','Sydney','sydney']]));
+  const committed=costRecords(parseCsv(' COMMITTED STOCK ,SKU,Average Cost\n7, v123 ,12.34\n0,ZERO,0\n,MISSING,0\nN/A,BAD,0\n3,DUP,1\n4,dup,1'));
+  assert.equal(committed.get('V123').stock.committedStock,7);
+  assert.equal(committed.get('ZERO').stock.committedStock,0);
+  const liveHeadings=costRecords(parseCsv('SKU,Average Cost,Total Stock,Melbourne,Brisbane,Sydney,Committed\nV123,12.34,100,25,0,75,7\nZERO,0,0,0,0,0,0'));
+  assert.equal(liveHeadings.get('V123').stock.committedStock,7);
+  assert.equal(liveHeadings.get('ZERO').stock.committedStock,0);
+  assert.throws(()=>costRecords([['SKU','Average Cost','Committed','COMMITTED STOCK']]));
+  for(const sku of ['MISSING','BAD','DUP'])assert.equal(committed.get(sku).stock.committedStock,null);
+  assert.throws(()=>costRecords([['SKU','Average Cost','COMMITTED STOCK','committed_stock']]));
+  stockRows.get('V123').stock.committedStock=committed.get('V123').stock.committedStock;
+  const {POST:stockPost}=load('app/api/workspace/stock/route.ts');
+  const stockRequest=(id,skus,origin='https://test.invalid')=>new Request('https://test.invalid/api/workspace/stock',{method:'POST',headers:{origin,'content-type':'application/json',...(id?{'oai-authenticated-user-id':id,'oai-authenticated-user-email':'test@example.invalid'}:{})},body:JSON.stringify({skus})});
+  assert.equal((await stockPost(stockRequest(null,['V123']))).status,401);assert.equal(costCalls,0);
+  assert.equal((await stockPost(stockRequest('staff',['V123'],'https://other.invalid'))).status,403);
+  assert.equal((await stockPost(stockRequest('staff',[1]))).status,400);
+  fakeCosts.get('V123').stock=stockRows.get('V123').stock;
+  const stockResponse=await stockPost(stockRequest('staff',[' v123 ','MISSING','EXO-ONLY']));assert.equal(stockResponse.status,200);
+  assert.match(stockResponse.headers.get('cache-control'),/no-store/);
+  const stockJson=await stockResponse.json();assert.deepEqual(stockJson,{stock:{V123:stockRows.get('V123').stock,MISSING:stockRows.get('MISSING').stock,'EXO-ONLY':stockRows.get('MISSING').stock}});
+  assert.doesNotMatch(JSON.stringify(stockJson),/averageCost|latestCost|12.34|98765|sheet/i);
+  costCalls=0;catalogueCalls=0;
   let time = 0, loads = 0, broken = false;
   const cached = createCostCache({load:async()=>{loads++; if(broken) throw Error('private source details'); return parsed;}}, ()=>time);
   await cached(); await Promise.all([cached(),cached(),cached()]); assert.equal(loads,1);
@@ -45,6 +75,12 @@ function load(file) {
   time = 1_800_000; broken = true; await assert.rejects(cached(), /Cost source unavailable/);
   // A retry must recover immediately, without retaining a failed operation.
   broken = false; await cached(); assert.equal(loads,4);
+
+  let customTime=0,customLoads=0;
+  const shortCache=createCostCache({load:async()=>{customLoads++;return parsed;}},()=>customTime,parsed,2);
+  await shortCache();customTime=119999;await shortCache();assert.equal(customLoads,0);
+  customTime=120000;await shortCache();assert.equal(customLoads,1);
+  customTime=240000;await shortCache();assert.equal(customLoads,2);
 
   // Simulate an interrupted Worker fetch whose promise never settles. A new
   // request must load independently, then supply completed data to later calls.
@@ -67,7 +103,7 @@ function load(file) {
   assert.equal(adminAccess(request('test-admin'),config),200);
   assert.equal(adminAccess(request('local-preview'),config),403);
   const {GET} = load('app/admin/unit-cost/route.ts');
-  for(const id of [undefined,'other-user']) {
+  for(const id of [undefined]) {
     const response=await GET(request(id)); assert.equal(response.status,id?403:401);
     assert.match(response.headers.get('cache-control'),/no-store/);
     assert.doesNotMatch(await response.text(),/12\.34|98765\.43/);
@@ -80,6 +116,7 @@ function load(file) {
   assert.match(await (await GET(request('test-admin','zero'))).text(),/\$0\.00/);
   assert.match(await (await GET(request('test-admin','MISSING'))).text(),/N\/A/);
   const prior=costCalls; assert.match(await (await GET(request('test-admin','EXO-ONLY'))).text(),/N\/A/); assert.equal(costCalls,prior);
-  config.COST_ADMIN_USER_IDS=''; assert.equal((await GET(request('test-admin'))).status,403);
-  console.log('PASS: parsing and SKU matching; Average + Latest import; zero/missing/duplicates; cache expiry and interrupted-request recovery; anonymous/non-admin/revoked access denied before fetch; authorised script-free cost cells; no Latest Cost disclosure.');
+  config.COST_ADMIN_USER_IDS=''; assert.equal((await GET(request('other-user'))).status,200);
+  assert.equal((await GET(new Request('https://test.invalid/admin/unit-cost?sku=V123',{headers:{'oai-authenticated-user-id':'other-user'}}))).status,401);
+  console.log('PASS: stock headers/reordering/zero/missing/duplicates, authenticated stock API projection; parsing and SKU matching; Average Cost import; Latest Cost ignored; zero/missing/duplicates; cache expiry and interrupted-request recovery; anonymous requests denied before fetch; all signed-in users can view costs; authorised script-free cost cells; no Latest Cost disclosure.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

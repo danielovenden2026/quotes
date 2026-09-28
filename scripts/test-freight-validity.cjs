@@ -1,0 +1,13 @@
+const fs=require('fs'),path=require('path'),ts=require('typescript'),assert=require('assert/strict'),cache=new Map();
+function load(file){file=path.resolve(file);if(cache.has(file))return cache.get(file);const e={};cache.set(file,e);new Function('require','exports',ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText)(n=>n.startsWith('@/')?load(n.slice(2)+'.ts'):n.startsWith('.')?load(path.resolve(path.dirname(file),n+'.ts')):require(n),e);return e;}
+const {newQuote}=load('lib/quote.ts'),{freightInput,freightFingerprint,freightNeedsRefresh}=load('lib/freight.ts'),{applyQuoteAction}=load('lib/quote-actions.ts');
+const q={...newQuote(true),status:'Draft',expiry:'2099-12-31',freight:8182};
+q.freightEstimate={fingerprint:freightFingerprint(q),carrierCode:'carriertablerate',methodCode:'carriertablerate',label:'Delivery',amount:8182,calculatedAt:new Date().toISOString()};
+const edited=structuredClone(q);edited.items[0].price+=10000;edited.items[0].discount={type:'percent',value:10};assert.equal(freightFingerprint(edited),freightFingerprint(q));assert.equal(freightNeedsRefresh(edited),false);
+const saved=applyQuoteAction(q,{action:'save',version:q.version,quote:edited});assert.equal(freightNeedsRefresh(saved),false);assert.equal(applyQuoteAction(saved,{action:'ready',version:saved.version}).status,'Ready');
+const legacy=freightInput(q);edited.freightEstimate.fingerprint=JSON.stringify({...legacy,items:legacy.items.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))});assert.equal(freightNeedsRefresh(edited),false,'Existing price-bearing fingerprints remain current after price edits');
+for(const change of [v=>v.items[0].qty++,v=>v.items.splice(0,1),v=>v.items[0].sku='DIFFERENT-SKU',v=>v.postcode='9999',v=>v.items.find(i=>i.optional).selected=true]){const changed=structuredClone(edited);change(changed);assert.equal(freightNeedsRefresh(changed),true);assert.throws(()=>applyQuoteAction(changed,{action:'ready',version:changed.version}),/freight/);}
+const reordered=structuredClone(edited);reordered.items.reverse();assert.equal(freightNeedsRefresh(reordered),false);
+const unselected=structuredClone(edited);unselected.items.find(i=>i.optional&&!i.selected).qty++;assert.equal(freightNeedsRefresh(unselected),false);
+for(const fingerprint of ['broken','{}','null'])assert.equal(freightNeedsRefresh({...q,freightEstimate:{...q.freightEstimate,fingerprint}}),true);
+console.log('PASS: price/discount-only edits save and approve without freight refresh; legacy estimates preserved; quantity/product/address/selection changes still invalidate; row order and unselected options ignored; malformed estimates stale.');

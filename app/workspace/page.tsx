@@ -1,2 +1,7 @@
 import QuoteApp from '../quote-app';
-export default function Page(){return <QuoteApp initialView="staff"/>;}
+import { requireChatGPTUser } from '../chatgpt-auth';
+export const dynamic = 'force-dynamic';
+export default async function Page(){
+  await requireChatGPTUser('/workspace');
+  return <QuoteApp initialView="staff"/>;
+}

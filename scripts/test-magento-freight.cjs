@@ -1,0 +1,71 @@
+const fs=require('node:fs'),path=require('node:path'),ts=require('typescript'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..'),objects=new Map(),modules=new Map(),calls=[];
+const config={COST_ADMIN_USER_IDS:'admin',BUCKET:{get:async key=>objects.has(key)?{json:async()=>JSON.parse(objects.get(key))}:null,put:async(key,value)=>objects.set(key,value)}};
+function load(file){file=path.resolve(root,file);if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);const js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;new Function('require','exports',js)(name=>{if(name==='server-only')return {};if(name==='./store'&&file.endsWith('demo-freight.ts'))return {db:()=>({prepare:()=>({bind:id=>({first:async()=>id===demoSeed.id?{data:JSON.stringify(demoSeed)}:null})})})};if(name==='cloudflare:workers')return {env:config};if(!name.startsWith('.')&&!name.startsWith('@/'))return require(name);return load((name.startsWith('@/')?path.resolve(root,name.slice(2)):path.resolve(path.dirname(file),name))+'.ts');},exports);return exports;}
+let mode='ok',demoSeed;const mask='temporary_test_cart_0123456789';
+global.fetch=async(url,init)=>{calls.push({url,init});assert.ok(url.startsWith('https://www.verdex.com.au/rest/default/V1/'));assert.equal(init.redirect,'manual');assert.equal(init.headers.Authorization,undefined);assert.equal(init.headers.Cookie,undefined);assert.ok(!url.includes('payment')&&!url.includes('order'));
+ if(mode==='blocked')return new Response('private upstream HTML',{status:403,headers:{'cf-ray':'abcdef-SYD'}});
+ if(mode==='redirect')return new Response(null,{status:302,headers:{Location:'https://evil.test'}});
+ if(url.endsWith('directory/countries/AU'))return Response.json({available_regions:[{id:'570',code:'NSW',name:'New South Wales'}]});
+ if(url.endsWith('/guest-carts'))return Response.json(mask);
+ if(url.endsWith(mask))return Response.json({currency:{quote_currency_code:mode==='currency'?'USD':'AUD'}});
+ if(url.endsWith('/items')){const {cartItem}=JSON.parse(init.body);assert.equal(cartItem.quote_id,mask);return mode==='product-failure'?Response.json({message:'no stock'},{status:400}):Response.json({sku:cartItem.sku,qty:mode==='partial'?0:cartItem.qty});}
+ if(url.endsWith('/estimate-shipping-methods')){const {address}=JSON.parse(init.body);assert.equal(address.region_id,570);assert.equal(address.country_id,'AU');assert.ok(['2121','2150'].includes(address.postcode));assert.equal(address.email,undefined);return Response.json([{carrier_code:'verdexpickup',method_code:'verdexpickup',available:true,price_excl_tax:35},{carrier_code:'carriertablerate',method_code:'carriertablerate',method_title:'Carrier Delivery (B)',available:mode!=='unavailable',price_excl_tax:81.82,price_incl_tax:90},{carrier_code:'carriertablerate',method_code:'bad',available:true,price_excl_tax:-1}]);}
+ throw Error('unexpected URL');};
+const headers={'oai-authenticated-user-id':'admin','oai-authenticated-user-email':'admin@example.test',origin:'https://quote.test','content-type':'application/json'};
+const request=(body,extra={})=>new Request('https://quote.test/api/admin/magento-freight',{method:'POST',headers:{...headers,...extra},body:JSON.stringify(body)});
+(async()=>{
+ const service=load('lib/magento-freight.ts'),route=load('app/api/admin/magento-freight/route.ts'),ship={state:'NSW',postcode:'2121',items:[{sku:'V4020',qty:1},{sku:'V4020',qty:2}]};
+ for(const action of ['test','estimate','disconnect']){assert.equal((await route.POST(request({action},{'oai-authenticated-user-id':''}))).status,401);assert.equal((await route.POST(request({action},{'oai-authenticated-user-id':'other'}))).status,403);assert.equal((await route.POST(request({action},{origin:'https://evil.test'}))).status,403);}assert.equal(calls.length,0);
+ assert.equal((await route.GET(new Request('https://quote.test/api/admin/magento-freight'))).status,401);
+ assert.equal((await route.POST(request({action:'test',storeCode:'default/../../bad'}))).status,400);assert.equal(calls.length,0);
+ assert.equal((await route.POST(request({action:'estimate',shipment:ship}))).status,409);
+ const rates=await service.estimateMagento('default',ship);assert.deepEqual(rates,[{carrierCode:'carriertablerate',methodCode:'carriertablerate',label:'Carrier Delivery (B)',amount:8182}]);assert.equal(calls.filter(c=>c.url.endsWith('/items')).length,1);assert.equal(JSON.parse(calls.find(c=>c.url.endsWith('/items')).init.body).cartItem.qty,3);
+ calls.length=0;await assert.rejects(()=>service.estimateMagento('default',{...ship,items:[{sku:'ADHOC',qty:1,custom:true}]}),/ad hoc/);assert.equal(calls.length,0);
+ for(mode of ['blocked','redirect','currency','product-failure','partial','unavailable']){calls.length=0;await assert.rejects(()=>service.estimateMagento('default',ship));if(['product-failure','partial'].includes(mode))assert.ok(!calls.some(c=>c.url.includes('estimate-shipping-methods')));}
+ mode='blocked';let response=await route.POST(request({action:'test',storeCode:'default'}));const failed=await response.json();assert.equal(response.status,502);assert.equal(failed.diagnostics.status,403);assert.equal(failed.diagnostics.rayId,'abcdef-SYD');assert.doesNotMatch(JSON.stringify(failed),/private upstream|temporary_test_cart/);assert.equal(objects.size,0);
+ mode='ok';response=await route.POST(request({action:'test',storeCode:'default'}));assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/private, no-store/);const passed=await response.json();assert.equal(passed.enabled,true);assert.equal(passed.matchesExample,true);assert.equal((await service.getMagentoSettings()).testAmount,8182);
+ mode='blocked';await route.POST(request({action:'test',storeCode:'default'}));assert.equal((await service.getMagentoSettings()).enabled,true,'failed test retains saved settings');
+ mode='ok';assert.equal((await route.POST(request({action:'estimate',shipment:ship}))).status,200);await route.POST(request({action:'disconnect'}));assert.equal((await service.getMagentoSettings()).enabled,false);
+ const {newQuote}=load('lib/quote.ts'),{freightFingerprint,freightNeedsRefresh}=load('lib/freight.ts'),{applyQuoteAction}=load('lib/quote-actions.ts');
+ const q=newQuote(true);q.expiry='2099-12-31';q.freight=8182;q.freightEstimate={...rates[0],fingerprint:freightFingerprint(q),calculatedAt:new Date().toISOString()};assert.equal(freightNeedsRefresh(q),false);const reordered=structuredClone(q);reordered.items.reverse();assert.equal(freightNeedsRefresh(reordered),false);reordered.items[0].qty++;assert.equal(freightNeedsRefresh(reordered),false,'unselected extras do not affect shipment');q.items[0].qty++;assert.equal(freightNeedsRefresh(q),true);assert.throws(()=>applyQuoteAction(q,{version:q.version,action:'accept',agreed:true,name:'Tester',payment:'checkout'}),/freight/);q.status='Draft';assert.throws(()=>applyQuoteAction(q,{version:q.version,action:'ready'}),/freight/);q.freightEstimate=null;assert.equal(freightNeedsRefresh(q),false);
+ q.status='Ready';q.freightEstimate={...rates[0],fingerprint:freightFingerprint(q),calculatedAt:new Date().toISOString()};const changed=applyQuoteAction(q,{action:'customer',version:q.version,items:q.items.map((i,index)=>({sku:i.sku,qty:i.qty+(index===0?1:0),selected:i.selected}))});assert.equal(changed.status,'Ready');assert.ok(freightNeedsRefresh(changed));q.fulfilmentMethod='pickup';q.items[0].qty++;assert.equal(freightNeedsRefresh(q),false);
+ // Customer recalculation uses server quote data, saves quantities atomically and preserves price approval.
+ const {refreshCustomerFreight}=load('lib/customer-freight.ts');
+ await service.saveMagentoSettings({storeCode:'default',enabled:true});
+ const customerQuote=newQuote(true);customerQuote.expiry='2099-12-31';customerQuote.state='NSW';customerQuote.postcode='2121';customerQuote.items=[{...customerQuote.items[0],sku:'V4020'}];
+ customerQuote.freight=12345;customerQuote.freightEstimate={...rates[0],amount:12345,fingerprint:freightFingerprint(customerQuote),calculatedAt:new Date().toISOString()};
+ const payload={action:'customer-freight',version:customerQuote.version,items:[{sku:'V4020',qty:3,selected:true,price:1,standardPrice:1}],freight:0,handling:0,quote:{postcode:'9999'},freightEstimate:{amount:0},fulfilmentMethod:'delivery'};
+ const untouched=JSON.stringify(customerQuote);calls.length=0;
+ const refreshed=await refreshCustomerFreight(customerQuote,payload);
+ assert.equal(JSON.stringify(customerQuote),untouched);assert.equal(refreshed.items[0].qty,3);assert.equal(refreshed.items[0].price,customerQuote.items[0].price);assert.equal(refreshed.handling,customerQuote.handling);assert.equal(refreshed.freight,8182);assert.equal(refreshed.status,'Ready');assert.equal(refreshed.version,customerQuote.version+1);assert.equal(freightNeedsRefresh(refreshed),false);
+ assert.equal(JSON.parse(calls.find(c=>c.url.endsWith('/items')).init.body).cartItem.qty,3);
+ assert.equal(applyQuoteAction(refreshed,{version:refreshed.version,action:'accept',agreed:true,name:'Test Customer',payment:'checkout'}).status,'Accepted');
+ const savedChanged=applyQuoteAction(customerQuote,{...payload,action:'customer'});assert.equal(savedChanged.status,'Ready');assert.ok(freightNeedsRefresh(savedChanged));assert.throws(()=>applyQuoteAction(savedChanged,{version:savedChanged.version,action:'accept'}),/freight/);
+ assert.equal((await refreshCustomerFreight(savedChanged,{...payload,version:savedChanged.version})).status,'Ready');
+ const discounted=structuredClone(customerQuote);discounted.items[0].qty=4;discounted.items[0].baseQty=4;discounted.items[0].standardPrice=discounted.items[0].price+1000;
+ const priceHold=await refreshCustomerFreight(discounted,payload);assert.equal(priceHold.status,'Changes requested');assert.equal(priceHold.freight,8182);assert.equal(freightNeedsRefresh(priceHold),false);assert.throws(()=>applyQuoteAction(priceHold,{version:priceHold.version,action:'accept',agreed:true}),/approval/);
+ const legacy=structuredClone(savedChanged);legacy.status='Changes requested';legacy.revision++;legacy.snapshots=[{revision:legacy.revision-1,quote:customerQuote}];legacy.events.at(-1).text='Customer updated quantities without approval; quoted unit prices retained; calculated delivery freight needs review';
+ assert.equal((await refreshCustomerFreight(legacy,{...payload,version:legacy.version})).status,'Ready');
+ legacy.events.push({at:new Date().toISOString(),text:'Quote details saved'});await assert.rejects(()=>refreshCustomerFreight(legacy,{...payload,version:legacy.version}),/not available/);
+ for(const status of ['Draft','Accepted','Declined','Changes requested'])await assert.rejects(()=>refreshCustomerFreight({...customerQuote,status},payload),/not available/);
+ await assert.rejects(()=>refreshCustomerFreight({...customerQuote,expiry:'2000-01-01'},payload),/not available/);
+ await assert.rejects(()=>refreshCustomerFreight(customerQuote,{...payload,version:0}),/another window/);
+ mode='blocked';await assert.rejects(()=>refreshCustomerFreight(customerQuote,payload));assert.equal(JSON.stringify(customerQuote),untouched);mode='ok';
+ await assert.rejects(()=>refreshCustomerFreight(customerQuote,{...payload,items:[{sku:'V4020',qty:0,selected:true}]}));
+ await service.saveMagentoSettings({storeCode:'default',enabled:false});await assert.rejects(()=>refreshCustomerFreight(customerQuote,payload),/unavailable/);
+ await service.saveMagentoSettings({storeCode:'default',enabled:true});
+ const {demoFreight}=load('lib/demo-freight.ts'),{createDemoStore}=load('lib/demo-store.ts');
+ demoSeed={...customerQuote,id:'4be95871-dc22-454a-91fe-c62d29ef553b',number:'VQ-4BE95871'};
+ const demoCandidate=applyQuoteAction(demoSeed,{...payload,action:'customer'});
+ const demoBody={items:payload.items,shipmentFingerprint:freightFingerprint(demoCandidate)};
+ const demoRequest=(body,origin='https://quote.test')=>new Request('https://quote.test/demo/vq-4be95871/freight',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)});
+ assert.equal((await demoFreight(demoRequest(demoBody,'https://evil.test'),'VQ-4BE95871')).status,403);
+ const demoResponse=await demoFreight(demoRequest(demoBody),'VQ-4BE95871');assert.equal(demoResponse.status,200);const demoResult=await demoResponse.json();assert.deepEqual(Object.keys(demoResult).sort(),['freight','freightEstimate']);assert.equal(demoResult.freight,8182);
+ const store=createDemoStore(demoSeed);const demoSaved=await store.request('/api/quotes/'+demoSeed.id,{...payload,freightEstimate:demoResult.freightEstimate},'PATCH');assert.equal(demoSaved.freight,8182);assert.equal(demoSaved.status,'Ready');assert.equal(demoSaved.items[0].qty,3);assert.equal(freightNeedsRefresh(demoSaved),false);
+ assert.equal((await demoFreight(demoRequest({...demoBody,items:[{sku:'SECRET-SKU',qty:1,selected:true}]}),'VQ-4BE95871')).status,400);
+ assert.equal((await demoFreight(demoRequest({...demoBody,shipmentFingerprint:'arbitrary address'}),'VQ-4BE95871')).status,400);
+ console.log('PASS: scoped demo calculation, origin checks, no arbitrary SKU/address and temporary demo saving.');
+ console.log('PASS: customer refresh, trusted freight, atomic failure, stale/save/accept flow, price holds, legacy freight-only holds and locked quotes.');
+ console.log('PASS: auth/origin/body validation, fixed destination, guest cart isolation, duplicate SKUs, all-item success, AUD/ex-GST conversion, no order calls, failure diagnostics, test gating/persistence, manual override and stale freight review.');
+})().catch(e=>{console.error(e);process.exit(1);});

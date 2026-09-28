@@ -1,6 +1,7 @@
 import 'server-only';
+import {emptyStock,type StockLevels} from './stock';
 
-export type ProductCost = { averageCost: number | null; latestCost: number | null; duplicate?: boolean };
+export type ProductCost = { averageCost: number | null; stock: StockLevels; duplicate?: boolean };
 export type CostRecords = Map<string, ProductCost>;
 export type CostSource = { load(): Promise<CostRecords> };
 export type CostSourceConfig = { COST_SHEET_ID?: string; COST_SHEET_TAB?: string; COST_SOURCE_MODE?: string };
@@ -35,14 +36,20 @@ function costNumber(value: string | undefined): number | null {
 
 export function costRecords(rows: string[][]): CostRecords {
   const populated = rows.filter(row => row.some(cell => cell.trim()));
-  const header = populated.shift()?.map(s => s.trim().toLowerCase());
-  if (!header || header[0] !== 'sku' || header[1] !== 'average cost' || header[2] !== 'latest cost') throw new Error('Cost column headings do not match');
+  const header = populated.shift()?.map(s => s.trim().toLowerCase().replace(/^[,\s]+|[,\s]+$/g,'').replace(/[\s_-]+/g,'')).map(s=>s==='committed'?'committedstock':s);
+  if (!header) throw new Error('Sheet column headings do not match');
+  const keys=['sku','averagecost','totalstock','committedstock','melbourne','brisbane','sydney'];
+  for(const key of keys)if(header.filter(h=>h===key).length>1)throw new Error('Duplicate sheet column heading');
+  const index=Object.fromEntries(keys.map(key=>[key,header.indexOf(key)]));
+  if(index.sku<0||index.averagecost<0)throw new Error('SKU and Average Cost headings are required');
   const records: CostRecords = new Map();
+  const stockValue=(row:string[],key:string)=>{const raw=row[index[key]];return /[$a-z]/i.test(raw||'')?null:costNumber(raw);};
   for (const row of populated) {
-    const sku = normaliseSku(row[0] || '');
+    const sku = normaliseSku(row[index.sku] || '');
     if (!sku || sku.length > 100) continue;
-    // Ambiguous duplicate SKUs must never select an arbitrary cost.
-    records.set(sku, records.has(sku) ? {averageCost:null, latestCost:null, duplicate:true} : {averageCost:costNumber(row[1]), latestCost:costNumber(row[2])});
+    // Duplicate SKUs must never choose an arbitrary cost or stock quantity.
+    const stock:StockLevels={totalStock:stockValue(row,'totalstock'),committedStock:stockValue(row,'committedstock'),melbourne:stockValue(row,'melbourne'),brisbane:stockValue(row,'brisbane'),sydney:stockValue(row,'sydney')};
+    records.set(sku,records.has(sku)?{averageCost:null,stock:emptyStock(),duplicate:true}:{averageCost:costNumber(row[index.averagecost]),stock});
   }
   return records;
 }
@@ -59,7 +66,7 @@ export class GooglePublicSheetSource implements CostSource {
   constructor(private sheetId: string, private tab: string) {}
   async load(): Promise<CostRecords> {
     const url = new URL('https://docs.google.com/spreadsheets/d/' + this.sheetId + '/gviz/tq');
-    url.search = new URLSearchParams({tqx:'out:csv', sheet:this.tab, range:'A:C', headers:'1'}).toString();
+    url.search = new URLSearchParams({tqx:'out:csv', sheet:this.tab, range:'A:Z', headers:'1'}).toString();
     const response = await fetch(url, {headers:{Accept:'text/csv'}, redirect:'manual', signal:AbortSignal.timeout(15000), cache:'no-store'});
     if (!response.ok || !response.headers.get('content-type')?.includes('text/csv')) throw new Error('Cost source unavailable');
     return costRecords(parseCsv(await limitedText(response)));
@@ -74,15 +81,15 @@ export function createCostSource(config: CostSourceConfig): CostSource {
   return new GooglePublicSheetSource(config.COST_SHEET_ID, config.COST_SHEET_TAB || 'Costs');
 }
 
-export function createCostCache(source: CostSource, now = Date.now) {
-  let records: CostRecords | undefined, expires = 0;
+export function createCostCache(source: CostSource, now = Date.now, initial?:CostRecords, refreshMinutes=15) {
+  let records: CostRecords | undefined=initial, expires = initial?now()+refreshMinutes*60_000:0;
   return async (): Promise<CostRecords> => {
     if (records && now() < expires) return records;
     // Cache completed data only. A pending fetch belongs to its Worker request;
     // sharing it can strand later requests when its owner disconnects on refresh.
     try {
       const result = await source.load();
-      records = result; expires = now() + 15 * 60_000;
+      records = result; expires = now() + refreshMinutes * 60_000;
       return result;
     } catch {
       // Another request may have successfully refreshed while this one failed.

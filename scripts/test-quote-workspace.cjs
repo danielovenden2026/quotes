@@ -1,0 +1,47 @@
+const fs=require('fs'),path=require('path'),ts=require('typescript'),assert=require('assert/strict');
+const root=path.resolve(__dirname,'..'),modules=new Map();let calls=0,broken=false;
+const item={sku:'A',price:10000,qty:2,optional:false,selected:true};
+const quotes=[{id:'one',date:'2026-09-24',items:[item,{...item,sku:'MISSING',optional:true,selected:false}],freight:10000,handling:2500},{id:'two',date:'2026-09-25',items:[{...item,adhocId:'custom'}],freight:0,handling:0},{id:'missing',date:'2026-09-26',items:[{...item,sku:'MISSING'}],freight:0,handling:0}];
+function load(file){file=path.resolve(root,file);if(modules.has(file))return modules.get(file);const exports={};modules.set(file,exports);new Function('require','exports',ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(name=>{
+ if(name==='server-only')return {};
+ const target=name.startsWith('@/')?path.join(root,name.slice(2)+'.ts'):name.startsWith('.')?path.resolve(path.dirname(file),name+'.ts'):null;
+ if(target===path.join(root,'lib/store.ts'))return {db:()=>({prepare:sql=>({bind:owner=>{assert.equal(owner,'owner-a');assert.match(sql,/WHERE owner = \?/);calls++;return {all:async()=>({results:sql.includes('adhoc_products')?[{id:'custom',quote_id:'two',sku:'A',cost:5000}]:quotes.map(q=>({data:JSON.stringify(q)}))})};}})})};
+ if(target===path.join(root,'lib/cost-data.ts'))return {getCosts:async()=>{calls++;if(broken)throw Error('Secret sheet URL');return new Map([['A',{averageCost:60}],['PRIVATE',{averageCost:987654}]]);}};
+ if(target===path.join(root,'lib/catalogue-data.ts'))return {getCatalogue:async()=>({products:[{sku:'A'}]})};
+ if(target===path.join(root,'lib/gp-settings.ts'))return {getGpSettings:async()=>({targetPct:45})};
+ return target?load(target):require(name);
+},exports);return exports;}
+(async()=>{
+ const {GET}=load('app/api/workspace/quote-gp/route.ts');
+ assert.equal((await GET(new Request('https://test.invalid/api/workspace/quote-gp'))).status,401);assert.equal(calls,0);
+ const request=()=>new Request('https://test.invalid/api/workspace/quote-gp',{headers:{'oai-authenticated-user-id':'owner-a','oai-authenticated-user-email':'owner@test.invalid'}});
+ const response=await GET(request());assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/private, no-store/);
+ const data=await response.json();assert.equal(data.gp.one.pct,40);assert.equal(data.gp.one.low,true);assert.equal(data.gp.two.pct,50);assert.equal(data.gp.missing.pct,null);assert.equal(calls,3,'fetch source and owned records once for whole list');assert.doesNotMatch(JSON.stringify(data),/averageCost|987654|sheet|source_sku/);
+ broken=true;const failed=await GET(request());assert.equal(failed.status,503);assert.doesNotMatch(await failed.text(),/Secret/);
+ const {matchesQuoteFilters,quoteFilterError,emptyQuoteFilters}=load('lib/quote-filters.ts');
+ const filters=extra=>({...emptyQuoteFilters,...extra});
+ assert.equal(matchesQuoteFilters(quotes[0],40,filters({from:'2026-09-24',to:'2026-09-24',minPrice:'357.50',maxPrice:'357.50',minGp:'40',maxGp:'40'})),true);
+ for(const extra of [{from:'2026-09-25'},{to:'2026-09-23'},{minPrice:'358'},{maxPrice:'357'},{minGp:'41'},{maxGp:'39'}])assert.equal(matchesQuoteFilters(quotes[0],40,filters(extra)),false);
+ assert.equal(matchesQuoteFilters(quotes[0],null,emptyQuoteFilters),true);
+ assert.equal(matchesQuoteFilters(quotes[0],null,filters({minGp:'0'})),false);
+ assert.equal(matchesQuoteFilters(quotes[0],-20,filters({minGp:'-25',maxGp:'0'})),true);
+ for(const extra of [{from:'2026-10-01',to:'2026-09-01'},{minGp:'50',maxGp:'20'},{minPrice:'500',maxPrice:'100'},{minPrice:'-1'},{maxGp:'NaN'}])assert.ok(quoteFilterError(filters(extra)));
+ const {compareQuotes}=load('lib/quote-filters.ts');
+ const sortable=quotes.map((q,i)=>({...q,number:['VQ-10','VQ-2','VQ-20'][i]}));
+ const ordered=(key,direction)=>[...sortable].sort((a,b)=>compareQuotes(a,b,{key,direction},data.gp)).map(q=>q.id);
+ assert.deepEqual(ordered('date','asc'),['one','two','missing']);
+ assert.deepEqual(ordered('date','desc'),['missing','two','one']);
+ assert.deepEqual(ordered('number','asc'),['two','one','missing']);
+ assert.deepEqual(ordered('number','desc'),['missing','one','two']);
+ assert.equal(ordered('amount','desc')[0],'one');assert.equal(ordered('amount','asc').at(-1),'one');
+ assert.deepEqual(ordered('gp','asc'),['one','two','missing']);assert.deepEqual(ordered('gp','desc'),['two','one','missing']);
+ console.log('PASS: ascending/descending date, quote number, numeric total and GP sorting; missing GP stays last.');
+ const {quotesCsv}=load('lib/quote-csv.ts');
+ const csv=quotesCsv([{...sortable[0],company:'Acme, "Tools"\nSydney'},{...sortable[1],company:'=HYPERLINK("bad")'},{...sortable[2],company:'Zoë'}],{one:{pct:0},two:{pct:-12.5}},q=>'https://quote.test/workspace?id='+q.id);
+ assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.endsWith('\r\n'));
+ assert.ok(csv.includes('"Acme, ""Tools""\nSydney"'));assert.ok(csv.includes('"\'=HYPERLINK(""bad"")"'));
+ assert.ok(csv.includes(',357.50,0.0,"https://quote.test/workspace?id=one"'));assert.ok(csv.includes(',-12.5,'));assert.ok(csv.includes('"N/A"'));assert.ok(csv.includes('Zoë'));
+ const subset=quotesCsv([sortable[1]],{},()=> '');assert.ok(subset.includes('VQ-2'));assert.ok(!subset.includes('VQ-10'));assert.ok(!subset.includes('VQ-20'));
+ console.log('PASS: CSV selected rows, numeric amounts and GP, zero/negative/missing GP, links, Unicode, quoted commas/newlines and formula-like customer text.');
+ console.log('PASS: owned quote GP, authentication, private response, custom costs, missing costs, unselected extras, product-only GP, one source fetch, source error handling; combined/inclusive date, total and GP filters, open ranges, negative GP, missing GP and invalid ranges.');
+})().catch(e=>{console.error(e);process.exitCode=1;});
