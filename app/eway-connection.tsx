@@ -2,7 +2,7 @@
 import {useEffect,useState} from 'react';
 import {CreditCard,PlugZap,CheckCircle2} from 'lucide-react';
 import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from '@/components/ui/select';
-type Status={configured:boolean;mode:'sandbox'|'live';verifiedAt:string|null;paymentsEnabled:boolean;secureStorageReady?:boolean};
+type Status={configured:boolean;mode:'sandbox'|'live';verifiedAt:string|null;paymentsEnabled:boolean;testPaymentsEnabled?:boolean;secureStorageReady?:boolean};
 async function api(body?:unknown){const r=await fetch('/api/admin/eway',{cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const data:any=await r.json();if(!r.ok)throw Error(data.error||'eWAY could not be reached.');return data;}
 export default function EwayConnection(){
  const [status,setStatus]=useState<Status|null>(null),[mode,setMode]=useState<'sandbox'|'live'>('sandbox'),[apiKey,setApiKey]=useState(''),[apiPassword,setApiPassword]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[notice,setNotice]=useState(''),[error,setError]=useState('');
@@ -22,7 +22,7 @@ export default function EwayConnection(){
  {status?.configured&&<p className="connection-help">Saved mode: <strong>{status.mode==='live'?'Live':'Test (Sandbox)'}</strong>. Enter both credentials to change the saved connection. A failed connection test keeps the existing settings.</p>}
  <div className="actions"><button type="submit" className="btn primary" disabled={loading||busy||apiKey.trim().length<10||!apiPassword||status?.secureStorageReady===false}><PlugZap size={16}/>{busy?'Working…':'Verify & save connection'}</button>{status?.configured&&<><button type="button" className="btn outline" disabled={busy||loading} onClick={()=>void run('test')}><CheckCircle2 size={16}/>Test saved connection</button><button type="button" className="btn outline" disabled={busy||loading} onClick={()=>void run('disconnect')}>Disconnect</button></>}</div>
  </form>{status?.verifiedAt&&<p className="connection-help">Verified when saved: {new Date(status.verifiedAt).toLocaleString('en-AU',{timeZone:'Australia/Sydney'})} (Sydney)</p>}
- <p className="connection-help">Connection tests do not charge a card. Test (Sandbox) credentials enable secure test payments from saved quotes. Live payments remain disabled. Sandbox payments do not mark quotes paid or create Magento / EXO orders.</p>
+ <p className="connection-help">Connection tests do not charge a card. Live credentials enable real card payments from approved saved quotes. Sandbox credentials enable test payments only. Successful live card payments mark the quote accepted, but Magento / EXO order creation is still separate.</p>
  {error&&<p className="connection-feedback error" role="alert">{error}</p>}{notice&&<p className="connection-feedback success" role="status">{notice}</p>}
  </section>;
 }
