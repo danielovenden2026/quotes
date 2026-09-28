@@ -577,3 +577,24 @@ footer{color:var(--verdex-muted);border-color:var(--verdex-border)}
 .customer-share-link>strong{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .customer-share-link>input{width:100%;padding:9px 10px;border:1px solid #c8d5df;border-radius:6px;background:#fff;font-size:12px}
 .customer-share-link .actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+
+
+/* Embedded eWAY Secure Fields: card data stays inside eWAY-hosted iframes. */
+.eway-secure-fields{margin-top:14px;border:1px solid #0f6eb3;border-radius:7px;background:#fff;overflow:hidden}
+.eway-secure-fields.disabled{opacity:.65;pointer-events:none}
+.eway-card-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 18px;border-bottom:1px solid #d7e1e9}
+.eway-card-heading>span:first-child{display:flex;align-items:center;gap:10px;font-weight:600;color:#183b53}
+.eway-card-heading svg{color:#0875bc}
+.eway-card-brands{display:flex;align-items:center;gap:6px}
+.eway-card-brands b{display:inline-flex;align-items:center;justify-content:center;min-width:35px;height:22px;padding:0 5px;border:1px solid #cbd8e2;border-radius:4px;background:#fff;font-size:10px;color:#1e4d72;letter-spacing:-.02em}
+.eway-card-fields{padding:20px;display:grid;gap:12px;background:#fafcfd}
+.eway-card-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.eway-secure-field{position:relative;border:1px solid #c6d4de;border-radius:5px;background:#fff;min-height:70px;overflow:hidden}
+.eway-secure-field:focus-within{border-color:#0f75ba;box-shadow:0 0 0 2px #0f75ba1f}
+.eway-field-label{display:block;padding:8px 12px 0;font-size:12px;color:#63798b;line-height:1}
+.eway-secure-field>div{height:46px;width:100%}
+.eway-secure-field iframe{display:block;width:100%!important;height:46px!important;border:0!important}
+.eway-card-number>svg{position:absolute;right:12px;bottom:15px;color:#70808c;pointer-events:none}
+.eway-card-number>div{padding-right:34px}
+.eway-secure-status{margin:10px 18px 16px!important;color:#527189;font-size:13px}
+@media(max-width:560px){.eway-card-row{grid-template-columns:1fr}.eway-card-heading{align-items:flex-start;flex-direction:column}.eway-card-brands{align-self:flex-end}}

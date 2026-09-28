@@ -66,6 +66,47 @@ export async function startEwayPayment(q:Quote,version:number,origin:string,resu
   return {id,mode,status:'pending',amount,paymentUrl:url};
  }catch(e){await db().prepare("UPDATE eway_test_payments SET status='failed',updated=? WHERE id=? AND status='creating'").bind(new Date().toISOString(),id).run();throw e;}
 }
+export async function processEwaySecureFieldsPayment(q:Quote,version:number,securedCardData:unknown,resultPath='/payment-result'){
+ if(version!==q.version)throw new EwayError('This quote changed. Reload it before paying.',409);
+ if(typeof securedCardData!=='string'||securedCardData.length<10||securedCardData.length>500)throw new EwayError('Secure card details are missing or expired. Re-enter the card details and try again.');
+ const {details,amount}=checkPayable(q),credentials=await paymentCredentials(),mode=credentials.mode;
+ if(!credentials.publicApiKey)throw new EwayError('eWAY Secure Fields is not configured. Add the Public API Key in Workspace Connections.');
+ let existing=await db().prepare('SELECT * FROM eway_test_payments WHERE quote_id=? AND quote_version=?').bind(q.id,q.version).first<EwayPayment>();
+ if(existing){
+  if(paymentMode(existing)!==mode||existing.connection!==credentials.verifiedAt)throw new EwayError('The eWAY connection changed. Save checkout details again before starting another payment.');
+  if(existing.status==='succeeded')return {...paymentSummary(existing),resultUrl:resultPath+'?id='+existing.id};
+  if(existing.status==='pending')throw new EwayError('A hosted payment is already open for this quote. Return to the quote and save checkout details again before retrying.',409);
+  if(existing.status==='creating'&&Date.now()-Date.parse(existing.updated)<120000)throw new EwayError('A payment is already being processed. Wait a moment and try again.',409);
+ }
+ const id=existing?.id||crypto.randomUUID(),at=new Date().toISOString(),invoice=(mode==='live'?'LIVE-':'TEST-')+crypto.randomUUID();
+ if(existing){
+  const reset=await db().prepare("UPDATE eway_test_payments SET amount=?,invoice=?,connection=?,status='creating',access_code=NULL,payment_url=NULL,transaction_id=NULL,response_code=NULL,created=?,updated=? WHERE id=? AND status IN ('creating','declined','failed')").bind(amount,invoice,credentials.verifiedAt,at,at,id).run();
+  if(!reset.meta.changes)throw new EwayError('This payment cannot be restarted yet. Reload the quote and try again.',409);
+ }else{
+  const inserted=await db().prepare("INSERT OR IGNORE INTO eway_test_payments (id,quote_id,quote_version,amount,invoice,connection,status,created,updated) SELECT ?,id,version,?,?,?,'creating',?,? FROM quotes WHERE id=? AND version=?").bind(id,amount,invoice,credentials.verifiedAt,at,at,q.id,q.version).run();
+  if(!inserted.meta.changes)throw new EwayError('The quote changed or a payment is already being prepared. Reload and try again.',409);
+ }
+ try{
+  const a=details.billing;
+  const data=await call('/Transaction',credentials,{
+   Customer:{FirstName:a.firstName.slice(0,50),LastName:a.lastName.slice(0,50),CompanyName:a.company.slice(0,50),Street1:a.street1.slice(0,50),Street2:a.street2.slice(0,50),City:a.city.slice(0,50),State:a.state,PostalCode:a.postcode,Country:'au',Email:details.email.slice(0,50),Phone:a.phone.slice(0,32)},
+   Payment:{TotalAmount:amount,InvoiceNumber:invoice,InvoiceReference:id,CurrencyCode:'AUD',InvoiceDescription:('Verdex quote '+q.number).slice(0,64)},
+   Method:'ProcessPayment',TransactionType:'Purchase',SecuredCardData:securedCardData
+  });
+  if(data?.Errors)throw new EwayError('eWAY could not process the card. Check the card details and try again.');
+  const transactionId=String(data?.TransactionID||'');
+  const responseCode=typeof data?.ResponseCode==='string'&&/^\d{2}$/.test(data.ResponseCode)?data.ResponseCode:null;
+  if(!/^[1-9]\d*$/.test(transactionId)||data?.TransactionStatus!==true){
+   await db().prepare("UPDATE eway_test_payments SET status='declined',transaction_id=?,response_code=?,updated=? WHERE id=? AND status='creating'").bind(/^[1-9]\d*$/.test(transactionId)?transactionId:null,responseCode,new Date().toISOString(),id).run();
+   return {id,quoteId:q.id,quoteVersion:q.version,amount,status:'declined',transactionId:/^[1-9]\d*$/.test(transactionId)?transactionId:null,responseCode,mode,created:at,resultUrl:resultPath+'?id='+id};
+  }
+  await db().prepare("UPDATE eway_test_payments SET status='succeeded',transaction_id=?,response_code=?,updated=? WHERE id=? AND status='creating'").bind(transactionId,responseCode,new Date().toISOString(),id).run();
+  return {id,quoteId:q.id,quoteVersion:q.version,amount,status:'succeeded',transactionId,responseCode,mode,created:at,resultUrl:resultPath+'?id='+id};
+ }catch(e){
+  await db().prepare("UPDATE eway_test_payments SET status='failed',updated=? WHERE id=? AND status='creating'").bind(new Date().toISOString(),id).run();
+  throw e;
+ }
+}
 export function verifiedOutcome(p:EwayPayment,data:any){
  if(data?.Errors)throw new EwayError('The payment result is not available yet. Check again in a moment.',503);
  if(data?.AccessCode!==p.access_code)throw new EwayError('The returned payment session did not match. Payment has not been confirmed.',503);
