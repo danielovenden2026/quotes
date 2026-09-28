@@ -1,26 +1,23 @@
-# eWAY Sandbox checkout
+# eWAY checkout
 
-Version 127 connects approved, saved quotes to eWAY Responsive Shared Page for test card payments. Payment entry is on eWAY's secure page. No card number or CVV is collected by this application.
+Verdex Quotes supports eWAY Rapid API Responsive Shared Page in both Sandbox and Live (Production) modes. Card details are entered on eWAY's hosted payment page and are not collected by Verdex Quotes.
 
-## Test
-1. In Workspace Connections → eWAY, select Test (Sandbox) and save a Sandbox Rapid API Key and API Password. Live account credentials cannot be used in Sandbox. Magento's existing configuration is not changed.
-2. While signed in, open a saved Ready quote → Customer view → Accept quote & checkout now. Public demos cannot initiate payments.
-3. Complete the required checkout fields. Refresh freight if the delivery address changed. Select Credit / debit card and Continue to secure test payment.
-4. On the eWAY page use Visa 4444333322221111, name Eway Test, any future expiry, CVV 123.
-5. After payment, the return screen queries eWAY and shows the verified Sandbox result and transaction ID. No real money, paid quote, Magento order or EXO order is created.
+## Live payments
+1. In Workspace Connections → eWAY, select **Live (Production)** and save the production Rapid API Key and API Password.
+2. Open an approved, saved quote in Customer view → **Accept quote & checkout now**.
+3. Complete checkout details and select **Credit / debit card**.
+4. Continue to eWAY's secure hosted page and complete the payment.
+5. Verdex Quotes verifies the transaction with eWAY before treating it as successful.
+6. A verified successful Live payment marks the quote as accepted and records the eWAY transaction reference in quote activity.
+7. Magento / EXO order creation is not performed automatically by this payment integration.
 
-Sandbox accounts can be configured to simulate declines based on the cents value. Check Sandbox transaction response settings if a test is declined. To start again after a completed/failed test, return to checkout and use Save checkout details to create a new saved version before continuing.
+## Sandbox
+Select **Test (Sandbox)** in Workspace Connections and save separate Sandbox Rapid API credentials. Sandbox transactions do not take real money and do not mark quotes accepted.
 
-## Implementation boundaries
-- Live initiation is hard blocked on the server. No live payment enablement setting is exposed.
-- Existing authenticated workspace access and sendQuotes permission are required; this is an internal test flow, not anonymous customer sharing.
-- Server-owned totals include discounts, selected extras, freight, handling and GST; client amounts are ignored.
-- Unique D1 key (quote_id, quote_version) prevents concurrent session creation for the same saved version. A retry reuses the existing shared page.
-- Result verification uses the stored AccessCode, checks the invoice number, attempt reference and amount, and requires an explicit TransactionStatus. Browser return parameters never prove payment.
-- eway_test_payments stores only session metadata and safe transaction result fields. Sandbox records never alter quote acceptance or paid status. No card details are stored.
-- Connection replacement/disconnection can prevent old attempt verification; results can also be checked in the original Sandbox account.
-- Responsive Shared Page redirects back to /payment-result. Returning or selecting Check payment result performs server verification. Webhook/background reconciliation and live order fulfilment are not part of this Sandbox release.
+Use eWAY's published Sandbox test-card details when testing. Live and Sandbox credentials are separate.
 
-Sources: https://eway.io/api-v3/ (Responsive Shared Page), https://go.eway.io/s/article/Test-Credit-Card-Numbers
-
-Validation: scripts/test-eway-payment.cjs uses SQLite and mocked eWAY responses for success, decline, pending, mismatch, duplicate initiation, access controls and guards. scripts/test-eway.cjs verifies encrypted credential storage and read-only credential probes. No real card transaction is performed by these tests.
+## Security
+- API credentials are encrypted in the configured Cloudflare R2 secure storage.
+- Card numbers and CVV are entered only on eWAY's hosted Responsive Shared Page.
+- Verdex Quotes calculates the payable amount from the saved quote and verifies the returned access code, invoice reference and amount before accepting the result.
+- Live requests use `https://api.ewaypayments.com`; Sandbox requests use `https://api.sandbox.ewaypayments.com`.
