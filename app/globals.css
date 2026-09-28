@@ -555,3 +555,13 @@ footer{color:var(--verdex-muted);border-color:var(--verdex-border)}
 @media(max-width:480px){.payment-result-page{margin:20px auto;padding:16px}.payment-result-card{padding:22px}.checkout-card-test .btn{white-space:normal;height:auto;min-height:44px}}
 
 .paypal-setup-help{margin-top:18px;border-top:1px solid #c4d4df;padding-top:14px;color:#143e59;font-size:.9rem;line-height:1.6}.paypal-setup-help summary{font-weight:700;cursor:pointer}.paypal-setup-help ol{list-style:decimal;padding-left:24px;margin:12px 0}.paypal-setup-help li{margin:8px 0}.paypal-setup-help a{color:#006bb5;text-decoration:underline}.paypal-setup-help p{margin:12px 0}
+.header-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-logout {
+  white-space: nowrap;
+  text-decoration: none;
+}
