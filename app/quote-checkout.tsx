@@ -1,5 +1,5 @@
 'use client';
-import {useEffect,useId,useRef,useState} from 'react';
+import {useCallback,useEffect,useId,useRef,useState} from 'react';
 import {ArrowLeft,Building2,Home,Truck,Package,Forklift,CreditCard,LockKeyhole,CheckCircle2,RefreshCw} from 'lucide-react';
 import {Checkbox} from '@/components/ui/checkbox';
 import {RadioGroup,RadioGroupItem} from '@/components/ui/radio-group';
@@ -31,6 +31,7 @@ export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken
  const [details,setDetails]=useState(()=>initialCheckout(quote)),[error,setError]=useState(''),[savedMessage,setSavedMessage]=useState('');const id=useId();
  const [paying,setPaying]=useState(false),[gateway,setGateway]=useState<{configured:boolean;mode:'sandbox'|'live';paymentsEnabled:boolean;testPaymentsEnabled:boolean;secureFieldsReady?:boolean;publicApiKey?:string|null}|null>(null),[gatewayError,setGatewayError]=useState('');
  const paymentLock=useRef(false),secureFieldsSave=useRef<(()=>Promise<string>)|null>(null);
+ const registerSecureFieldsSave=useCallback((save:(()=>Promise<string>)|null)=>{secureFieldsSave.current=save;},[]);
  const gatewayUrl=publicToken?'/api/public/quote/'+encodeURIComponent(publicToken)+'/eway':'/api/quotes/'+quote.id+'/eway';
  useEffect(()=>{if(demo)return;const controller=new AbortController();fetch(gatewayUrl,{cache:'no-store',signal:controller.signal}).then(async r=>{const data=await r.json() as any;if(!r.ok)throw Error(data.error);setGateway(data);}).catch(e=>{if(!controller.signal.aborted)setGatewayError(e.message||'eWAY status could not be loaded.');});return()=>controller.abort();},[demo,quote.id,gatewayUrl]);
  async function pay(){
@@ -80,7 +81,7 @@ export default function QuoteCheckout({quote,busy,demo,onBack,onSave,publicToken
  {details.paymentMethod==='card'&&<div className="checkout-card-test">
  <strong>{gateway?.mode==='live'?'Secure card payment · Live':'Secure card payment · Sandbox'}</strong>
  <p>{gateway?.mode==='live'?'Your card will be processed securely by eWAY without leaving this checkout page.':'Sandbox mode only. No real money is taken.'}</p>
- {demo?<p className="checkout-error">Open an approved customer quotation to use eWAY. Demo quotations cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:!gateway.secureFieldsReady||!gateway.publicApiKey?<p className="checkout-error">Reconnect eWAY in Workspace Connections and add the Public API Key to enable embedded card fields.</p>:<><EwaySecureFields publicApiKey={gateway.publicApiKey} disabled={locked||stale||!available} onRegisterSave={save=>{secureFieldsSave.current=save;}}/>{gateway.mode==='sandbox'&&<p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p>}<button type="button" className="btn primary" disabled={locked||stale||!available||!(gateway.paymentsEnabled||gateway.testPaymentsEnabled)} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Processing payment…':gateway.mode==='live'?'Pay securely now':'Process secure test payment'}</button></>}
+ {demo?<p className="checkout-error">Open an approved customer quotation to use eWAY. Demo quotations cannot start payments.</p>:gatewayError?<p className="checkout-error">{gatewayError}</p>:!gateway?<p>Checking eWAY connection…</p>:!gateway.configured?<p className="checkout-error">Connect eWAY in Workspace Connections.</p>:!gateway.secureFieldsReady||!gateway.publicApiKey?<p className="checkout-error">Reconnect eWAY in Workspace Connections and add the Public API Key to enable embedded card fields.</p>:<><EwaySecureFields publicApiKey={gateway.publicApiKey} disabled={locked||stale||!available} onRegisterSave={registerSecureFieldsSave}/>{gateway.mode==='sandbox'&&<p className="checkout-test-card">Test Visa: <strong>4444 3333 2222 1111</strong><br/>Name: Eway Test · Expiry: any future date · CVV: 123</p>}<button type="button" className="btn primary" disabled={locked||stale||!available||!(gateway.paymentsEnabled||gateway.testPaymentsEnabled)} onClick={()=>void pay()}><CreditCard size={18}/>{paying?'Processing payment…':gateway.mode==='live'?'Pay securely now':'Process secure test payment'}</button></>}
  </div>}
  </section>
  </fieldset>
